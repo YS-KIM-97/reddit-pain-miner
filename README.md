@@ -1,6 +1,6 @@
 # Reddit Pain Miner
 
-> Reddit API reviewers: see [application summary](docs/reddit-api-application.md), [data handling and retention](docs/data-retention.md), and [architecture](docs/architecture.md).
+> Reddit API reviewers: see [application summary](docs/reddit-api-application.md), [data handling and retention](docs/data-retention.md), [privacy statement](docs/privacy.md), and [architecture](docs/architecture.md).
 
 매주 Reddit의 반복적인 불편을 수집해, 근거가 연결된 앱 아이디어 3개와 7일짜리 MVP PRD를 만드는 최소 자동화 저장소입니다.
 
@@ -107,3 +107,5 @@ reddit-pain --config config/pipeline.yaml run
 make lint
 make test
 ```
+
+승인 전·후 운영 절차는 [Reddit API approval checklist](docs/approval-checklist.md)에 정리되어 있습니다.
