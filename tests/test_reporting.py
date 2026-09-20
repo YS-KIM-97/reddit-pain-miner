@@ -31,3 +31,14 @@ def test_report_is_sorted_by_score() -> None:
     )
     markdown = idea_report_markdown(report)
     assert markdown.index("idea-2") < markdown.index("idea-1")
+
+
+def test_report_accepts_a_research_specific_title() -> None:
+    report = IdeaReport(
+        generated_at=datetime(2026, 9, 21, tzinfo=UTC),
+        source_count=0,
+        ideas=[],
+    )
+    assert idea_report_markdown(report, title="공개 근거 테스트").startswith(
+        "# 공개 근거 테스트"
+    )

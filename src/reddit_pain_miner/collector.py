@@ -7,7 +7,7 @@ import praw
 
 from reddit_pain_miner.config import RedditSettings
 from reddit_pain_miner.filtering import excerpt, find_keywords
-from reddit_pain_miner.models import PainSignal, SourceKind
+from reddit_pain_miner.models import PainSignal, SourceKind, SourcePlatform
 
 
 class MissingRedditCredentials(RuntimeError):
@@ -51,7 +51,8 @@ def _post_signal(post: object, keywords: list[str]) -> PainSignal | None:
         return None
     return PainSignal(
         id=f"post-{post.id}",
-        subreddit=str(post.subreddit),
+        source_platform=SourcePlatform.REDDIT,
+        community=str(post.subreddit),
         kind=SourceKind.POST,
         text=excerpt(text),
         score=int(getattr(post, "score", 0)),
@@ -71,7 +72,8 @@ def _comment_signal(comment: object, post: object, keywords: list[str]) -> PainS
         permalink = permalink()
     return PainSignal(
         id=f"comment-{comment.id}",
-        subreddit=str(post.subreddit),
+        source_platform=SourcePlatform.REDDIT,
+        community=str(post.subreddit),
         kind=SourceKind.COMMENT,
         text=excerpt(text),
         score=int(getattr(comment, "score", 0)),

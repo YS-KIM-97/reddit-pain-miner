@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 def utc_now() -> datetime:
@@ -13,11 +13,20 @@ def utc_now() -> datetime:
 class SourceKind(StrEnum):
     POST = "post"
     COMMENT = "comment"
+    ISSUE = "issue"
+    DOCUMENTATION = "documentation"
+
+
+class SourcePlatform(StrEnum):
+    REDDIT = "reddit"
+    GITHUB = "github"
+    SYNTHETIC = "synthetic"
 
 
 class PainSignal(BaseModel):
     id: str
-    subreddit: str
+    source_platform: SourcePlatform = SourcePlatform.REDDIT
+    community: str = Field(validation_alias=AliasChoices("community", "subreddit"))
     kind: SourceKind
     text: str
     score: int = 0

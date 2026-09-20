@@ -24,7 +24,8 @@ def _compact_signals(signals: list[PainSignal]) -> str:
     payload = [
         {
             "id": signal.id,
-            "subreddit": signal.subreddit,
+            "source_platform": signal.source_platform,
+            "community": signal.community,
             "text": signal.text,
             "score": signal.score,
             "keywords": signal.matched_keywords,
@@ -55,7 +56,7 @@ def analyze_with_openai(
                     "and have exactly one core feature. Use only supplied signal IDs as "
                     "evidence. Paraphrase every problem; do not reproduce source sentences "
                     "or quote more than seven consecutive source words. Never include usernames, "
-                    "permalinks, or Reddit content IDs in human-readable fields. "
+                    "permalinks, or source content IDs in human-readable fields. "
                     "Avoid generic AI wrappers. "
                     f"Return exactly {idea_count} ideas, ordered by total opportunity score. "
                     f"Write human-readable fields in language code '{output_language}'."
@@ -107,13 +108,19 @@ def analyze_offline(signals: list[PainSignal], idea_count: int = 3) -> IdeaRepor
     ideas: list[EvidenceBackedAppIdea] = []
     for index in range(idea_count):
         evidence = ranked[index % len(ranked)]
+        if evidence.source_platform == "reddit":
+            audience = f"r/{evidence.community}"
+        elif evidence.source_platform == "github":
+            audience = f"{evidence.community} 프로젝트"
+        else:
+            audience = evidence.community
         ideas.append(
             EvidenceBackedAppIdea(
                 id=f"idea-{index + 1}",
                 name=f"Pain Signal Pilot {index + 1}",
-                target_user=f"r/{evidence.subreddit}에서 반복 작업을 하는 사용자",
+                target_user=f"{audience}에서 반복 작업을 하는 사용자",
                 problem=(
-                    f"r/{evidence.subreddit} 사용자들이 반복적이고 시간이 많이 드는 "
+                    f"{audience} 사용자들이 반복적이고 시간이 많이 드는 "
                     "작업을 더 단순하게 처리할 방법을 찾고 있음"
                 ),
                 core_feature=f"'{common_keyword}' 상황을 한 번의 입력으로 처리하는 단일 워크플로",

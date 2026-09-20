@@ -3,9 +3,14 @@ from __future__ import annotations
 from reddit_pain_miner.models import IdeaReport, MvpSpec
 
 
-def idea_report_markdown(report: IdeaReport) -> str:
+def idea_report_markdown(
+    report: IdeaReport,
+    *,
+    title: str = "주간 Reddit Pain Point 리포트",
+    next_step: str = "`reddit-pain prd --idea-id idea-1`처럼 하나를 선택하세요.",
+) -> str:
     lines = [
-        "# 주간 Reddit Pain Point 리포트",
+        f"# {title}",
         "",
         f"- 생성 시각: {report.generated_at.isoformat()}",
         f"- 분석한 Pain Signal: {report.source_count}개",
@@ -25,7 +30,7 @@ def idea_report_markdown(report: IdeaReport) -> str:
                 "",
             ]
         )
-    lines.append("다음 단계: `reddit-pain prd --idea-id idea-1`처럼 하나를 선택하세요.")
+    lines.append(f"다음 단계: {next_step}")
     return "\n".join(lines)
 
 

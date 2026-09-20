@@ -1,5 +1,6 @@
 from reddit_pain_miner.collector import collect_signals
 from reddit_pain_miner.config import RedditSettings
+from reddit_pain_miner.models import SourcePlatform
 
 
 class FakeComments:
@@ -57,5 +58,7 @@ def test_collection_filters_and_sorts_posts_and_comments() -> None:
     )
     signals = collect_signals(settings, reddit=FakeReddit())  # type: ignore[arg-type]
     assert [signal.id for signal in signals] == ["post-p1", "comment-c1"]
+    assert all(signal.source_platform == SourcePlatform.REDDIT for signal in signals)
+    assert all(signal.community == "test" for signal in signals)
     assert signals[0].matched_keywords == ["I hate when"]
     assert signals[1].permalink.endswith("/c1/")

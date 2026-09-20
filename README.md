@@ -25,6 +25,16 @@ reddit-pain prd --offline --idea-id idea-1
 
 비식별 결과는 `artifacts/`에 생성됩니다.
 
+Reddit 승인 전에도 공개 GitHub 근거로 조사부터 PRD까지 재현할 수 있습니다.
+
+```bash
+reddit-pain scenario
+```
+
+기본 사례는 영수증 기반 경비 입력 문제입니다. 사람이 검토하고 패러프레이즈한 공개 이슈·문서 3개를 `PainSignal`로 읽어 근거 연결을 검증하고, 아이디어 3개를 비교한 다음 최고 점수 아이디어의 MVP PRD를 `artifacts/research-demo/`에 생성합니다. 이 명령은 Reddit, OpenAI 또는 다른 외부 API를 호출하지 않습니다.
+
+GitHub의 **Actions → Public research demo → Run workflow**에서도 같은 결과를 만들고 30일 보관 artifact로 내려받을 수 있습니다.
+
 ## 실제 데이터로 실행
 
 1. `.env.example`을 `.env`로 복사하고 값을 입력합니다. CLI는 현재 작업 디렉터리의 `.env`를 자동 로드하며 이 파일은 Git에서 제외됩니다. 비밀값을 소스 코드나 채팅에 붙여 넣지 마세요.
@@ -85,6 +95,7 @@ reddit-pain analyze --input FILE [--offline] 합성·승인된 입력을 앱 아
 reddit-pain report                          Markdown 리포트 렌더링
 reddit-pain prd --idea-id idea-1 [--offline] 선택 아이디어의 MVP PRD 생성
 reddit-pain run [--input FILE] [--offline]   수집부터 리포트까지 실행
+reddit-pain scenario                        공개 근거 fixture로 조사→PRD 재현
 ```
 
 모든 명령에서 기본 설정 파일을 바꾸려면 서브명령 앞에 `--config`를 둡니다.

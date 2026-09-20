@@ -1,7 +1,8 @@
 [
   {
     "id": "post-sample1",
-    "subreddit": "smallbusiness",
+    "source_platform": "synthetic",
+    "community": "smallbusiness sample",
     "kind": "post",
     "text": "I hate when clients send receipts through five different channels. Reconciliation takes forever every Friday.",
     "score": 42,
@@ -12,7 +13,8 @@
   },
   {
     "id": "comment-sample2",
-    "subreddit": "productivity",
+    "source_platform": "synthetic",
+    "community": "productivity sample",
     "kind": "comment",
     "text": "Is there a tool for turning a messy voice memo into one prioritized action list? My current manual process is painful.",
     "score": 31,
@@ -23,7 +25,8 @@
   },
   {
     "id": "post-sample3",
-    "subreddit": "SaaS",
+    "source_platform": "synthetic",
+    "community": "SaaS sample",
     "kind": "post",
     "text": "We're struggling with checking whether onboarding emails have broken links before every campaign.",
     "score": 19,

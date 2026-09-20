@@ -15,6 +15,7 @@ from reddit_pain_miner.io import write_json, write_text
 from reddit_pain_miner.pipeline import load_report, load_signals, run_pipeline
 from reddit_pain_miner.prd import SpecError, generate_spec_offline, generate_spec_with_openai
 from reddit_pain_miner.reporting import idea_report_markdown, spec_markdown
+from reddit_pain_miner.scenario import run_research_scenario
 
 DEFAULT_CONFIG = Path("config/pipeline.yaml")
 
@@ -46,10 +47,29 @@ def _parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser("run", help="Run collection, analysis, and reporting")
     run.add_argument("--input", type=Path, help="Use an existing signals file instead of Reddit")
     run.add_argument("--offline", action="store_true")
+
+    scenario = subcommands.add_parser(
+        "scenario", help="Run a reviewed public-research fixture without external APIs"
+    )
+    scenario.add_argument(
+        "--input",
+        type=Path,
+        default=Path("examples/research/expense-receipts/scenario.json"),
+    )
+    scenario.add_argument(
+        "--output-dir", type=Path, default=Path("artifacts/research-demo")
+    )
     return parser
 
 
 def _execute(args: argparse.Namespace) -> None:
+    if args.command == "scenario":
+        paths = run_research_scenario(args.input, args.output_dir)
+        print(f"Research scenario complete: {args.input}")
+        for path in paths:
+            print(f"- {path}")
+        return
+
     settings = PipelineSettings.load(args.config)
     if args.command == "doctor":
         checks = run_checks(settings, live=args.live)
