@@ -28,14 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
-
-type ExpenseDraft = {
-  merchant: string;
-  date: string;
-  amount: string;
-  category: string;
-  description: string;
-};
+import { ExpenseDraft, parseReceipt } from "@/lib/receipt-parser";
 
 type SavedExpense = ExpenseDraft & { id: number };
 
@@ -65,65 +58,6 @@ const categories = ["식비", "교통", "사무용품", "숙박", "교육", "기
 
 function today() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function normalizeDate(value: string) {
-  const numbers = value.match(/\d+/g);
-  if (!numbers || numbers.length < 3) return "";
-  const [year, month, day] = numbers;
-  const fullYear = year.length === 2 ? `20${year}` : year;
-  return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-}
-
-function inferCategory(text: string) {
-  const lower = text.toLowerCase();
-  if (/coffee|cafe|restaurant|food|식당|카페|커피|김밥|치킨|식사/.test(lower)) {
-    return "식비";
-  }
-  if (/taxi|bus|train|metro|parking|택시|버스|지하철|주차|철도/.test(lower)) {
-    return "교통";
-  }
-  if (/hotel|stay|inn|호텔|숙박|리조트/.test(lower)) return "숙박";
-  if (/book|course|class|도서|강의|교육/.test(lower)) return "교육";
-  if (/office|paper|pen|문구|프린터|용지|사무/.test(lower)) return "사무용품";
-  return "기타";
-}
-
-function parseReceipt(text: string): ExpenseDraft {
-  const lines = text
-    .split("\n")
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-  const joined = lines.join(" ");
-  const dateMatch = joined.match(
-    /(?:20)?\d{2}[./-]\s?\d{1,2}[./-]\s?\d{1,2}|20\d{2}년\s?\d{1,2}월\s?\d{1,2}일/,
-  );
-  const preferredAmountLine = lines.find((line) =>
-    /total|amount|grand|합계|결제금액|받을금액|총액/i.test(line),
-  );
-  const amountCandidates = (preferredAmountLine ?? joined).match(
-    /(?:₩|krw|￦)?\s?\d{1,3}(?:[,.]\d{3})+(?:\.\d{2})?|(?:₩|krw|￦)\s?\d+(?:\.\d{2})?/gi,
-  );
-  const parsedAmounts = (amountCandidates ?? [])
-    .map((value) => Number(value.replace(/[^\d.]/g, "")))
-    .filter((value) => Number.isFinite(value));
-  const amount = parsedAmounts.length ? Math.max(...parsedAmounts) : 0;
-  const merchant =
-    lines.find(
-      (line) =>
-        line.length >= 2 &&
-        line.length <= 36 &&
-        !/영수증|receipt|사업자|대표자|전화|tel|주소|date|일시|카드/i.test(line) &&
-        !/^\W?\d/.test(line),
-    ) ?? "";
-
-  return {
-    merchant,
-    date: dateMatch ? normalizeDate(dateMatch[0]) : today(),
-    amount: amount ? String(Math.round(amount)) : "",
-    category: inferCategory(joined),
-    description: merchant ? `${merchant} 영수증` : "영수증 경비",
-  };
 }
 
 export function ClaimSnapApp() {
@@ -270,18 +204,23 @@ export function ClaimSnapApp() {
 
     let worker: import("tesseract.js").Worker | null = null;
     try {
-      const { createWorker, OEM } = await import("tesseract.js");
+      const { createWorker, OEM, PSM } = await import("tesseract.js");
+      let ocrPass = 0;
       worker = await createWorker(["kor", "eng"], OEM.LSTM_ONLY, {
         logger: (message) => {
           if (typeof message.progress === "number") {
-            setProgress(Math.max(8, Math.round(message.progress * 100)));
+            setProgress(Math.max(8, Math.round(((ocrPass + message.progress) / 2) * 100)));
           }
         },
       });
-      const result = await worker.recognize(file, { rotateAuto: true });
-      const text = result.data.text.trim();
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
+      const blockResult = await worker.recognize(file);
+      ocrPass = 1;
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN });
+      const columnResult = await worker.recognize(file);
+      const text = `${columnResult.data.text}\n${blockResult.data.text}`.trim();
       setDraft(text ? parseReceipt(text) : { ...emptyDraft, date: today() });
-      setConfidence(Math.round(result.data.confidence));
+      setConfidence(Math.round(Math.max(blockResult.data.confidence, columnResult.data.confidence)));
       setProgress(100);
       setStatus("review");
       if (text) {
