@@ -1,0 +1,46 @@
+name: Weekly pain mining
+
+on:
+  schedule:
+    # Monday 09:00 Asia/Seoul (00:00 UTC)
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+    inputs:
+      offline:
+        description: "Use checked-in sample signals (no external APIs)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  mine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+      REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5-mini' }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install .
+      - name: Run live weekly pipeline
+        if: ${{ !inputs.offline }}
+        run: reddit-pain run
+      - name: Run offline smoke pipeline
+        if: ${{ inputs.offline }}
+        run: reddit-pain run --offline --input examples/sample_signals.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weekly-pain-report-${{ github.run_number }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30

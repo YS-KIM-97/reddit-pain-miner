@@ -1,0 +1,35 @@
+[
+  {
+    "id": "post-sample1",
+    "subreddit": "smallbusiness",
+    "kind": "post",
+    "text": "I hate when clients send receipts through five different channels. Reconciliation takes forever every Friday.",
+    "score": 42,
+    "permalink": "https://www.reddit.com/r/smallbusiness/example1",
+    "matched_keywords": ["I hate when", "takes forever"],
+    "post_title": "Client receipt chaos",
+    "collected_at": "2026-09-21T00:00:00Z"
+  },
+  {
+    "id": "comment-sample2",
+    "subreddit": "productivity",
+    "kind": "comment",
+    "text": "Is there a tool for turning a messy voice memo into one prioritized action list? My current manual process is painful.",
+    "score": 31,
+    "permalink": "https://www.reddit.com/r/productivity/example2",
+    "matched_keywords": ["Is there a tool for", "manual process"],
+    "post_title": "Voice notes workflow",
+    "collected_at": "2026-09-21T00:00:00Z"
+  },
+  {
+    "id": "post-sample3",
+    "subreddit": "SaaS",
+    "kind": "post",
+    "text": "We're struggling with checking whether onboarding emails have broken links before every campaign.",
+    "score": 19,
+    "permalink": "https://www.reddit.com/r/SaaS/example3",
+    "matched_keywords": ["struggling with"],
+    "post_title": "Onboarding email QA",
+    "collected_at": "2026-09-21T00:00:00Z"
+  }
+]

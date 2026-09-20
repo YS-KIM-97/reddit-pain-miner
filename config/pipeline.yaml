@@ -1,0 +1,28 @@
+reddit:
+  subreddits:
+    - Entrepreneur
+    - productivity
+    - smallbusiness
+    - SaaS
+  post_limit_per_subreddit: 40
+  comment_limit_per_post: 20
+  minimum_score: 2
+  keywords:
+    - "I hate when"
+    - "Is there a tool for"
+    - "I wish there was"
+    - "struggling with"
+    - "pain in the ass"
+    - "takes forever"
+    - "manual process"
+    - "there has to be a better way"
+
+analysis:
+  idea_count: 3
+  max_signals: 120
+  model: gpt-5-mini
+  output_language: ko
+
+output:
+  directory: artifacts
+  notify_slack: false
