@@ -30,6 +30,7 @@ test("parses the supplied Seven Eleven receipt OCR", () => {
     merchant: "세븐일레븐 문정수정점",
     date: "2020-06-09",
     amount: "13820",
+    currency: "KRW",
     category: "식비",
     description: "세븐일레븐 문정수정점 영수증",
   });
@@ -40,7 +41,67 @@ test("parses a clean total without receipt-specific assumptions", () => {
     merchant: "스타벅스 강남점",
     date: "2026-09-21",
     amount: "12800",
+    currency: "KRW",
     category: "식비",
     description: "스타벅스 강남점 영수증",
+  });
+});
+
+test("repairs a malformed Korean grouping and recognizes Seven Eleven by its support number", () => {
+  const ocr = `
+  4,18 we
+  [1 04] 2019-09-10 (회) 14
+  판결싸. 보액3입
+  2,60
+  세계 18 me EE
+  부 가 서 736 6
+  Egle 고객센터 1577-0711
+  `;
+  assert.deepEqual(parseReceipt(ocr), {
+    merchant: "세븐일레븐",
+    date: "2019-09-10",
+    amount: "2600",
+    currency: "KRW",
+    category: "식비",
+    description: "세븐일레븐 영수증",
+  });
+});
+
+test("reconciles a noisy USD total from subtotal, tax, and tip", () => {
+  const ocr = `
+  EPIC STEAKHOUSE
+  RECEIPT
+  SUBTOTAL $185.00
+  TAX 17.02
+  TIP $715.00
+  TOTAL $211.02
+  `;
+  assert.deepEqual(parseReceipt(ocr), {
+    merchant: "EPIC STEAKHOUSE",
+    date: "",
+    amount: "277.02",
+    currency: "USD",
+    category: "식비",
+    description: "EPIC STEAKHOUSE 영수증",
+  });
+});
+
+test("leaves the merchant blank when a cropped receipt only contains policy text", () => {
+  const ocr = `
+  개
+  기내(신선 7일)
+  능(결제카드지참)
+  P0S:1021-5338
+  [구매]2017-06-02 21:13
+  상품명 단가 수량 금액
+  합      계 73,550
+  `;
+  assert.deepEqual(parseReceipt(ocr), {
+    merchant: "",
+    date: "2017-06-02",
+    amount: "73550",
+    currency: "KRW",
+    category: "기타",
+    description: "영수증 경비",
   });
 });

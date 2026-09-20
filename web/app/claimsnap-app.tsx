@@ -50,6 +50,7 @@ const emptyDraft: ExpenseDraft = {
   merchant: "",
   date: "",
   amount: "",
+  currency: "KRW",
   category: "기타",
   description: "",
 };
@@ -58,6 +59,14 @@ const categories = ["식비", "교통", "사무용품", "숙박", "교육", "기
 
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function formatMoney(amount: string, currency: ExpenseDraft["currency"]) {
+  return new Intl.NumberFormat(currency === "USD" ? "en-US" : "ko-KR", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: currency === "USD" ? 2 : 0,
+  }).format(Number(amount));
 }
 
 export function ClaimSnapApp() {
@@ -130,6 +139,7 @@ export function ClaimSnapApp() {
             merchant: value.merchant.trim(),
             date: value.date,
             amount: String(value.amount),
+            currency: "KRW",
             category: value.category,
             description: value.description.trim(),
           };
@@ -174,6 +184,7 @@ export function ClaimSnapApp() {
       merchant: "모닝 브루 성수",
       date: today(),
       amount: "12800",
+      currency: "KRW",
       category: "식비",
       description: "클라이언트 미팅 커피",
     });
@@ -261,7 +272,7 @@ export function ClaimSnapApp() {
   };
 
   const formattedAmount = draft.amount
-    ? `${Number(draft.amount.replace(/[^\d]/g, "") || 0).toLocaleString("ko-KR")}원`
+    ? formatMoney(draft.amount, draft.currency)
     : "금액 미확인";
 
   return (
@@ -415,11 +426,16 @@ export function ClaimSnapApp() {
                   <p className="text-sm text-muted-foreground">틀린 값은 바로 고칠 수 있어요</p>
                 </div>
               </div>
-              {confidence !== null && status !== "reading" && (
+              {status === "reading" ? (
+                <span className="flex items-center gap-2 rounded-full bg-[#eaf3ff] px-3 py-1.5 text-xs font-bold text-primary">
+                  <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                  분석 중 {progress}%
+                </span>
+              ) : confidence !== null ? (
                 <span className="rounded-full bg-[#eaf3ff] px-3 py-1.5 text-xs font-bold text-primary">
                   인식 신뢰도 {confidence}%
                 </span>
-              )}
+              ) : null}
             </div>
 
             <div className="p-5 sm:p-7">
@@ -436,8 +452,29 @@ export function ClaimSnapApp() {
                   </div>
                 </div>
               ) : status === "reading" ? (
-                <div className="min-h-[430px] space-y-6" aria-hidden="true">
-                  {["w-1/2", "w-2/3", "w-1/3", "w-1/2", "w-full"].map((width) => (
+                <div className="min-h-[430px] space-y-6" aria-live="polite">
+                  <div className="rounded-[20px] border border-primary/20 bg-[#f2f7ff] p-5 sm:p-6">
+                    <div className="flex items-start gap-4">
+                      <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-white shadow-[0_10px_25px_rgba(30,77,216,.2)]">
+                        <ScanLine className="size-5 animate-pulse" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base font-black tracking-tight">
+                          {progress < 50 ? "1차 · 글자 영역을 읽고 있어요" : "2차 · 날짜와 합계를 확인하고 있어요"}
+                        </p>
+                        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                          {progress < 50
+                            ? "상호와 영수증 전체 문자를 찾는 중입니다."
+                            : "다른 방식으로 한 번 더 읽어 숫자를 교차 검증합니다."}
+                        </p>
+                        <div className="mt-4 flex items-center gap-3">
+                          <Progress value={progress} className="h-2.5 flex-1" />
+                          <span className="w-10 text-right text-sm font-black text-primary">{progress}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {["w-1/2", "w-2/3", "w-1/3"].map((width) => (
                     <div key={width}>
                       <div className="mb-2 h-3 w-16 animate-pulse rounded bg-muted" />
                       <div className={`h-11 ${width} animate-pulse rounded-xl bg-muted`} />
@@ -474,16 +511,20 @@ export function ClaimSnapApp() {
                       <div className="relative">
                         <Input
                           id="amount"
-                          inputMode="numeric"
+                          inputMode={draft.currency === "USD" ? "decimal" : "numeric"}
                           value={draft.amount}
-                          onChange={(event) =>
-                            updateDraft("amount", event.target.value.replace(/[^\d]/g, ""))
-                          }
+                          onChange={(event) => {
+                            const next = event.target.value.replace(
+                              draft.currency === "USD" ? /[^\d.]/g : /[^\d]/g,
+                              "",
+                            );
+                            updateDraft("amount", next);
+                          }}
                           placeholder="0"
                           className="h-12 rounded-xl px-4 pr-10 text-lg font-bold"
                         />
                         <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted-foreground">
-                          원
+                          {draft.currency === "USD" ? "$" : "원"}
                         </span>
                       </div>
                     </Field>
@@ -572,7 +613,7 @@ export function ClaimSnapApp() {
                       {expense.date} · {expense.category}
                     </p>
                   </div>
-                  <p className="font-black">{Number(expense.amount).toLocaleString("ko-KR")}원</p>
+                  <p className="font-black">{formatMoney(expense.amount, expense.currency)}</p>
                   <Button
                     variant="ghost"
                     size="icon"
