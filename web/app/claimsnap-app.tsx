@@ -1,0 +1,661 @@
+"use client";
+
+import {
+  ArrowRight,
+  Check,
+  FileCheck2,
+  ImagePlus,
+  LoaderCircle,
+  LockKeyhole,
+  ReceiptText,
+  RotateCcw,
+  ScanLine,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Toaster } from "@/components/ui/sonner";
+
+type ExpenseDraft = {
+  merchant: string;
+  date: string;
+  amount: string;
+  category: string;
+  description: string;
+};
+
+type SavedExpense = ExpenseDraft & { id: number };
+
+type WebMCPContext = {
+  registerTool: (
+    tool: {
+      name: string;
+      title: string;
+      description: string;
+      inputSchema: object;
+      annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
+      execute: (input: unknown) => Promise<Record<string, unknown>>;
+    },
+    options: { signal: AbortSignal },
+  ) => void | Promise<void>;
+};
+
+const emptyDraft: ExpenseDraft = {
+  merchant: "",
+  date: "",
+  amount: "",
+  category: "기타",
+  description: "",
+};
+
+const categories = ["식비", "교통", "사무용품", "숙박", "교육", "기타"];
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeDate(value: string) {
+  const numbers = value.match(/\d+/g);
+  if (!numbers || numbers.length < 3) return "";
+  const [year, month, day] = numbers;
+  const fullYear = year.length === 2 ? `20${year}` : year;
+  return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function inferCategory(text: string) {
+  const lower = text.toLowerCase();
+  if (/coffee|cafe|restaurant|food|식당|카페|커피|김밥|치킨|식사/.test(lower)) {
+    return "식비";
+  }
+  if (/taxi|bus|train|metro|parking|택시|버스|지하철|주차|철도/.test(lower)) {
+    return "교통";
+  }
+  if (/hotel|stay|inn|호텔|숙박|리조트/.test(lower)) return "숙박";
+  if (/book|course|class|도서|강의|교육/.test(lower)) return "교육";
+  if (/office|paper|pen|문구|프린터|용지|사무/.test(lower)) return "사무용품";
+  return "기타";
+}
+
+function parseReceipt(text: string): ExpenseDraft {
+  const lines = text
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const joined = lines.join(" ");
+  const dateMatch = joined.match(
+    /(?:20)?\d{2}[./-]\s?\d{1,2}[./-]\s?\d{1,2}|20\d{2}년\s?\d{1,2}월\s?\d{1,2}일/,
+  );
+  const preferredAmountLine = lines.find((line) =>
+    /total|amount|grand|합계|결제금액|받을금액|총액/i.test(line),
+  );
+  const amountCandidates = (preferredAmountLine ?? joined).match(
+    /(?:₩|krw|￦)?\s?\d{1,3}(?:[,.]\d{3})+(?:\.\d{2})?|(?:₩|krw|￦)\s?\d+(?:\.\d{2})?/gi,
+  );
+  const parsedAmounts = (amountCandidates ?? [])
+    .map((value) => Number(value.replace(/[^\d.]/g, "")))
+    .filter((value) => Number.isFinite(value));
+  const amount = parsedAmounts.length ? Math.max(...parsedAmounts) : 0;
+  const merchant =
+    lines.find(
+      (line) =>
+        line.length >= 2 &&
+        line.length <= 36 &&
+        !/영수증|receipt|사업자|대표자|전화|tel|주소|date|일시|카드/i.test(line) &&
+        !/^\W?\d/.test(line),
+    ) ?? "";
+
+  return {
+    merchant,
+    date: dateMatch ? normalizeDate(dateMatch[0]) : today(),
+    amount: amount ? String(Math.round(amount)) : "",
+    category: inferCategory(joined),
+    description: merchant ? `${merchant} 영수증` : "영수증 경비",
+  };
+}
+
+export function ClaimSnapApp() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const objectUrlRef = useRef<string | null>(null);
+  const [draft, setDraft] = useState<ExpenseDraft>(emptyDraft);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [progress, setProgress] = useState(0);
+  const [confidence, setConfidence] = useState<number | null>(null);
+  const [status, setStatus] = useState<"idle" | "reading" | "review" | "saved">(
+    "idle",
+  );
+  const [savedExpenses, setSavedExpenses] = useState<SavedExpense[]>([]);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+    return () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const context = (document as Document & { modelContext?: WebMCPContext }).modelContext;
+    if (!context?.registerTool) return;
+    const lifecycle = new AbortController();
+
+    const registration = context.registerTool(
+      {
+        name: "create_expense_line",
+        title: "경비 한 줄 만들기",
+        description:
+          "검증된 상호, 날짜, 금액, 분류, 설명으로 경비 한 줄을 만들고 화면의 확정 목록에 추가합니다.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            merchant: { type: "string", minLength: 1 },
+            date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+            amount: { type: "integer", minimum: 1 },
+            category: { type: "string", enum: categories },
+            description: { type: "string" },
+          },
+          required: ["merchant", "date", "amount", "category", "description"],
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: false, untrustedContentHint: false },
+        async execute(input) {
+          if (!input || typeof input !== "object" || Array.isArray(input)) {
+            throw new Error("경비 입력은 객체여야 합니다.");
+          }
+          const value = input as Record<string, unknown>;
+          if (
+            typeof value.merchant !== "string" ||
+            !value.merchant.trim() ||
+            typeof value.date !== "string" ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(value.date) ||
+            typeof value.amount !== "number" ||
+            !Number.isInteger(value.amount) ||
+            value.amount <= 0 ||
+            typeof value.category !== "string" ||
+            !categories.includes(value.category) ||
+            typeof value.description !== "string"
+          ) {
+            throw new Error("경비 필드 형식이 올바르지 않습니다.");
+          }
+          const expense: SavedExpense = {
+            id: Date.now(),
+            merchant: value.merchant.trim(),
+            date: value.date,
+            amount: String(value.amount),
+            category: value.category,
+            description: value.description.trim(),
+          };
+          setDraft(expense);
+          setSavedExpenses((current) => [expense, ...current]);
+          setFileName("도구로 입력한 경비");
+          setConfidence(null);
+          setStatus("saved");
+          return {
+            status: "confirmed",
+            expenseId: expense.id,
+            merchant: expense.merchant,
+            amount: value.amount,
+            category: expense.category,
+          };
+        },
+      },
+      { signal: lifecycle.signal },
+    );
+    void Promise.resolve(registration).catch(() => undefined);
+    return () => lifecycle.abort();
+  }, []);
+
+  const updateDraft = (field: keyof ExpenseDraft, value: string) => {
+    setDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const reset = () => {
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    objectUrlRef.current = null;
+    setPreviewUrl(null);
+    setFileName("");
+    setDraft(emptyDraft);
+    setProgress(0);
+    setConfidence(null);
+    setStatus("idle");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const useDemo = () => {
+    setDraft({
+      merchant: "모닝 브루 성수",
+      date: today(),
+      amount: "12800",
+      category: "식비",
+      description: "클라이언트 미팅 커피",
+    });
+    setFileName("샘플 영수증");
+    setPreviewUrl(null);
+    setConfidence(94);
+    setProgress(100);
+    setStatus("review");
+  };
+
+  const processFile = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("JPG, PNG 또는 WebP 이미지로 올려주세요.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("이미지는 10MB보다 작아야 합니다.");
+      return;
+    }
+
+    reset();
+    const objectUrl = URL.createObjectURL(file);
+    objectUrlRef.current = objectUrl;
+    setPreviewUrl(objectUrl);
+    setFileName(file.name);
+    setStatus("reading");
+    setProgress(6);
+
+    let worker: import("tesseract.js").Worker | null = null;
+    try {
+      const { createWorker, OEM } = await import("tesseract.js");
+      worker = await createWorker(["kor", "eng"], OEM.LSTM_ONLY, {
+        logger: (message) => {
+          if (typeof message.progress === "number") {
+            setProgress(Math.max(8, Math.round(message.progress * 100)));
+          }
+        },
+      });
+      const result = await worker.recognize(file, { rotateAuto: true });
+      const text = result.data.text.trim();
+      setDraft(text ? parseReceipt(text) : { ...emptyDraft, date: today() });
+      setConfidence(Math.round(result.data.confidence));
+      setProgress(100);
+      setStatus("review");
+      if (text) {
+        toast.success("읽기가 끝났어요. 값이 맞는지 확인해 주세요.");
+      } else {
+        toast.warning("글자를 찾지 못했어요. 값을 직접 입력해 주세요.");
+      }
+    } catch {
+      setDraft({ ...emptyDraft, date: today(), description: file.name });
+      setConfidence(null);
+      setProgress(100);
+      setStatus("review");
+      toast.warning("자동 인식에 실패했어요. 값을 직접 입력할 수 있습니다.");
+    } finally {
+      await worker?.terminate();
+    }
+  };
+
+  const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) void processFile(file);
+  };
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (file) void processFile(file);
+  };
+
+  const saveExpense = () => {
+    if (!draft.merchant.trim() || !draft.date || !draft.amount.trim()) {
+      toast.error("상호, 날짜, 금액을 확인해 주세요.");
+      return;
+    }
+    setSavedExpenses((current) => [{ ...draft, id: Date.now() }, ...current]);
+    setStatus("saved");
+    toast.success("경비 한 줄을 확정했습니다.");
+  };
+
+  const formattedAmount = draft.amount
+    ? `${Number(draft.amount.replace(/[^\d]/g, "") || 0).toLocaleString("ko-KR")}원`
+    : "금액 미확인";
+
+  return (
+    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
+      <Toaster richColors position="top-center" />
+      <header className="border-b border-border/80 bg-background/90 backdrop-blur">
+        <div className="mx-auto flex h-18 max-w-[1280px] items-center justify-between px-5 sm:px-8">
+          <div className="flex items-center gap-3">
+            <div className="grid size-10 place-items-center rounded-[14px] bg-primary text-primary-foreground shadow-[0_10px_30px_rgba(30,77,216,.24)]">
+              <ScanLine className="size-5" aria-hidden="true" />
+            </div>
+            <div>
+              <p className="text-lg font-bold tracking-[-0.03em]">ClaimSnap</p>
+              <p className="text-xs font-medium text-muted-foreground">영수증에서 경비 한 줄까지</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground shadow-sm">
+            <LockKeyhole className="size-3.5 text-primary" aria-hidden="true" />
+            이미지는 이 기기에서만 처리
+          </div>
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-[1280px] px-5 py-8 sm:px-8 sm:py-12">
+        <div className="mb-8 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+          <div>
+            <p className="mb-3 flex items-center gap-2 text-sm font-bold text-primary">
+              <Sparkles className="size-4" aria-hidden="true" />
+              새 경비 입력
+            </p>
+            <h1 className="max-w-2xl text-[clamp(2rem,4.5vw,4.4rem)] font-black leading-[0.98] tracking-[-0.06em] text-balance">
+              찍고, 확인하고,
+              <br />
+              경비 한 줄로 끝내세요.
+            </h1>
+          </div>
+          <p className="max-w-md text-base leading-7 text-muted-foreground">
+            영수증의 상호·날짜·금액·분류를 자동으로 읽습니다. 결과를 확인한 뒤 바로 확정하세요.
+          </p>
+        </div>
+
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,.92fr)_minmax(0,1.08fr)]">
+          <section className="overflow-hidden rounded-[28px] border border-border bg-card shadow-[0_24px_70px_rgba(15,34,58,.08)]">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-6">
+              <div className="flex items-center gap-3">
+                <span className="step-number">1</span>
+                <div>
+                  <h2 className="font-bold tracking-tight">영수증 올리기</h2>
+                  <p className="text-sm text-muted-foreground">JPG, PNG, WebP · 최대 10MB</p>
+                </div>
+              </div>
+              {status !== "idle" && (
+                <Button variant="ghost" size="icon" onClick={reset} aria-label="영수증 초기화">
+                  <RotateCcw aria-hidden="true" />
+                </Button>
+              )}
+            </div>
+
+            <div className="p-4 sm:p-6">
+              {status === "idle" ? (
+                <div
+                  className="upload-zone group"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={onDrop}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={onFileChange}
+                    className="sr-only"
+                    id="receipt-upload"
+                  />
+                  <div className="scan-frame" aria-hidden="true">
+                    <ReceiptText className="size-9" />
+                  </div>
+                  <div className="mt-6 text-center">
+                    <p className="text-lg font-bold">영수증을 여기에 놓으세요</p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      모바일에서는 카메라로 바로 촬영할 수 있습니다.
+                    </p>
+                  </div>
+                  <Button
+                    size="lg"
+                    className="mt-6 h-12 rounded-xl px-5"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <ImagePlus aria-hidden="true" />
+                    이미지 선택
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={useDemo}
+                    className="mt-4 text-sm font-bold text-primary underline-offset-4 hover:underline"
+                  >
+                    이미지 없이 샘플로 체험
+                  </button>
+                </div>
+              ) : (
+                <div className="relative min-h-[440px] overflow-hidden rounded-[20px] bg-[#081a2b]">
+                  {previewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={previewUrl}
+                      alt="업로드한 영수증 미리보기"
+                      className="h-[440px] w-full object-contain p-5"
+                    />
+                  ) : (
+                    <div className="grid h-[440px] place-items-center text-center text-white">
+                      <div>
+                        <ReceiptText className="mx-auto size-16 text-[#b7ff4a]" />
+                        <p className="mt-5 text-xl font-bold">샘플 영수증</p>
+                        <p className="mt-2 text-sm text-white/60">실제 이미지는 전송되지 않습니다.</p>
+                      </div>
+                    </div>
+                  )}
+                  <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-3 rounded-xl bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold">{fileName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {status === "reading" ? "글자를 읽고 있어요" : "이미지 준비 완료"}
+                      </p>
+                    </div>
+                    {status === "reading" ? (
+                      <LoaderCircle className="size-5 animate-spin text-primary" aria-label="처리 중" />
+                    ) : (
+                      <Check className="size-5 text-primary" aria-label="처리 완료" />
+                    )}
+                  </div>
+                </div>
+              )}
+              {status === "reading" && (
+                <div className="mt-5" aria-live="polite">
+                  <div className="mb-2 flex justify-between text-sm font-semibold">
+                    <span>영수증 읽는 중</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <Progress value={progress} className="h-2.5" />
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-[28px] border border-border bg-card shadow-[0_24px_70px_rgba(15,34,58,.08)]">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-6">
+              <div className="flex items-center gap-3">
+                <span className="step-number">2</span>
+                <div>
+                  <h2 className="font-bold tracking-tight">내용 확인</h2>
+                  <p className="text-sm text-muted-foreground">틀린 값은 바로 고칠 수 있어요</p>
+                </div>
+              </div>
+              {confidence !== null && status !== "reading" && (
+                <span className="rounded-full bg-[#eaf3ff] px-3 py-1.5 text-xs font-bold text-primary">
+                  인식 신뢰도 {confidence}%
+                </span>
+              )}
+            </div>
+
+            <div className="p-5 sm:p-7">
+              {status === "idle" ? (
+                <div className="grid min-h-[430px] place-items-center rounded-[20px] border border-dashed border-border bg-muted/50 px-7 text-center">
+                  <div>
+                    <div className="mx-auto grid size-14 place-items-center rounded-2xl bg-background text-muted-foreground shadow-sm">
+                      <ArrowRight className="size-6" aria-hidden="true" />
+                    </div>
+                    <p className="mt-5 font-bold">영수증을 올리면 여기에 표시됩니다</p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      자동 입력 후에도 모든 값을 직접 수정할 수 있습니다.
+                    </p>
+                  </div>
+                </div>
+              ) : status === "reading" ? (
+                <div className="min-h-[430px] space-y-6" aria-hidden="true">
+                  {["w-1/2", "w-2/3", "w-1/3", "w-1/2", "w-full"].map((width) => (
+                    <div key={width}>
+                      <div className="mb-2 h-3 w-16 animate-pulse rounded bg-muted" />
+                      <div className={`h-11 ${width} animate-pulse rounded-xl bg-muted`} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="merchant">상호</FieldLabel>
+                      <Input
+                        id="merchant"
+                        value={draft.merchant}
+                        onChange={(event) => updateDraft("merchant", event.target.value)}
+                        placeholder="예: 모닝 브루 성수"
+                        className="h-12 rounded-xl px-4"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="date">날짜</FieldLabel>
+                      <Input
+                        id="date"
+                        type="date"
+                        value={draft.date}
+                        onChange={(event) => updateDraft("date", event.target.value)}
+                        className="h-12 rounded-xl px-4"
+                      />
+                    </Field>
+                  </div>
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="amount">금액</FieldLabel>
+                      <div className="relative">
+                        <Input
+                          id="amount"
+                          inputMode="numeric"
+                          value={draft.amount}
+                          onChange={(event) =>
+                            updateDraft("amount", event.target.value.replace(/[^\d]/g, ""))
+                          }
+                          placeholder="0"
+                          className="h-12 rounded-xl px-4 pr-10 text-lg font-bold"
+                        />
+                        <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted-foreground">
+                          원
+                        </span>
+                      </div>
+                    </Field>
+                    <Field>
+                      <FieldLabel>분류</FieldLabel>
+                      <Select
+                        value={draft.category}
+                        onValueChange={(value) => updateDraft("category", value)}
+                      >
+                        <SelectTrigger className="h-12 w-full rounded-xl px-4">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {categories.map((category) => (
+                            <SelectItem key={category} value={category}>
+                              {category}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </div>
+                  <Field>
+                    <FieldLabel htmlFor="description">설명</FieldLabel>
+                    <Input
+                      id="description"
+                      value={draft.description}
+                      onChange={(event) => updateDraft("description", event.target.value)}
+                      placeholder="이 경비를 알아볼 수 있는 설명"
+                      className="h-12 rounded-xl px-4"
+                    />
+                    <FieldDescription>회계 내역에 표시되는 문구입니다.</FieldDescription>
+                  </Field>
+
+                  <div className="rounded-2xl bg-[#081a2b] p-4 text-white sm:p-5">
+                    <p className="text-xs font-bold uppercase tracking-[0.12em] text-white/55">
+                      확정할 경비
+                    </p>
+                    <div className="mt-3 flex items-end justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="truncate font-bold">{draft.merchant || "상호 미확인"}</p>
+                        <p className="mt-1 text-sm text-white/60">
+                          {draft.date || "날짜 미확인"} · {draft.category}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-2xl font-black tracking-tight text-[#b7ff4a]">
+                        {formattedAmount}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    size="lg"
+                    className="h-14 w-full rounded-2xl text-base font-bold shadow-[0_14px_30px_rgba(30,77,216,.2)]"
+                    onClick={saveExpense}
+                  >
+                    <FileCheck2 aria-hidden="true" />
+                    {status === "saved" ? "확정 완료" : "경비 한 줄 확정"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        {savedExpenses.length > 0 && (
+          <section className="mt-5 rounded-[28px] border border-border bg-card p-5 shadow-[0_24px_70px_rgba(15,34,58,.06)] sm:p-7">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-primary">이번 세션</p>
+                <h2 className="mt-1 text-xl font-black tracking-tight">확정한 경비</h2>
+              </div>
+              <span className="rounded-full bg-muted px-3 py-1 text-sm font-bold">
+                {savedExpenses.length}건
+              </span>
+            </div>
+            <div className="divide-y divide-border">
+              {savedExpenses.map((expense) => (
+                <div key={expense.id} className="flex items-center gap-4 py-4">
+                  <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#eaf3ff] text-primary">
+                    <ReceiptText className="size-5" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-bold">{expense.merchant}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {expense.date} · {expense.category}
+                    </p>
+                  </div>
+                  <p className="font-black">{Number(expense.amount).toLocaleString("ko-KR")}원</p>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() =>
+                      setSavedExpenses((current) =>
+                        current.filter((item) => item.id !== expense.id),
+                      )
+                    }
+                    aria-label={`${expense.merchant} 경비 삭제`}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </section>
+
+      <footer className="border-t border-border py-6 text-center text-sm text-muted-foreground">
+        ClaimSnap MVP · 영수증 이미지는 업로드하거나 저장하지 않습니다.
+      </footer>
+    </main>
+  );
+}
