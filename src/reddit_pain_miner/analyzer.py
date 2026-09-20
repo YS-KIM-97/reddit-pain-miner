@@ -6,7 +6,14 @@ from collections import Counter
 
 from openai import OpenAI
 
-from reddit_pain_miner.models import AppIdea, IdeaBatch, IdeaReport, PainSignal, ScoreCard
+from reddit_pain_miner.filtering import has_verbatim_overlap
+from reddit_pain_miner.models import (
+    EvidenceBackedAppIdea,
+    IdeaBatch,
+    IdeaReport,
+    PainSignal,
+    ScoreCard,
+)
 
 
 class AnalysisError(RuntimeError):
@@ -46,7 +53,10 @@ def analyze_with_openai(
                     "You are a skeptical product researcher. Generate only evidence-backed "
                     "MVP ideas. Each idea must be buildable by one developer in seven days "
                     "and have exactly one core feature. Use only supplied signal IDs as "
-                    "evidence. Avoid generic AI wrappers. "
+                    "evidence. Paraphrase every problem; do not reproduce source sentences "
+                    "or quote more than seven consecutive source words. Never include usernames, "
+                    "permalinks, or Reddit content IDs in human-readable fields. "
+                    "Avoid generic AI wrappers. "
                     f"Return exactly {idea_count} ideas, ordered by total opportunity score. "
                     f"Write human-readable fields in language code '{output_language}'."
                 ),
@@ -63,9 +73,26 @@ def analyze_with_openai(
 
     valid_ids = {signal.id for signal in signals}
     for idea in batch.ideas:
+        if not idea.evidence_signal_ids:
+            raise AnalysisError(f"Idea {idea.id} does not reference any evidence signals.")
         unknown = set(idea.evidence_signal_ids) - valid_ids
         if unknown:
             raise AnalysisError(f"Idea {idea.id} references unknown signals: {sorted(unknown)}")
+        candidate_text = " ".join(
+            (
+                idea.name,
+                idea.target_user,
+                idea.problem,
+                idea.core_feature,
+                idea.validation_test,
+                idea.monetization,
+                idea.key_risk,
+            )
+        )
+        if any(has_verbatim_overlap(signal.text, candidate_text) for signal in signals):
+            raise AnalysisError(
+                f"Idea {idea.id} contains a long verbatim source phrase; refusing to persist it."
+            )
     return IdeaReport(source_count=len(signals), ideas=batch.ideas)
 
 
@@ -77,15 +104,18 @@ def analyze_offline(signals: list[PainSignal], idea_count: int = 3) -> IdeaRepor
     ranked = sorted(signals, key=lambda item: (item.score, len(item.text)), reverse=True)
     keyword_counts = Counter(keyword for item in signals for keyword in item.matched_keywords)
     common_keyword = keyword_counts.most_common(1)[0][0] if keyword_counts else "manual work"
-    ideas: list[AppIdea] = []
+    ideas: list[EvidenceBackedAppIdea] = []
     for index in range(idea_count):
         evidence = ranked[index % len(ranked)]
         ideas.append(
-            AppIdea(
+            EvidenceBackedAppIdea(
                 id=f"idea-{index + 1}",
                 name=f"Pain Signal Pilot {index + 1}",
                 target_user=f"r/{evidence.subreddit}에서 반복 작업을 하는 사용자",
-                problem=evidence.text[:240],
+                problem=(
+                    f"r/{evidence.subreddit} 사용자들이 반복적이고 시간이 많이 드는 "
+                    "작업을 더 단순하게 처리할 방법을 찾고 있음"
+                ),
                 core_feature=f"'{common_keyword}' 상황을 한 번의 입력으로 처리하는 단일 워크플로",
                 evidence_signal_ids=[evidence.id],
                 validation_test=(

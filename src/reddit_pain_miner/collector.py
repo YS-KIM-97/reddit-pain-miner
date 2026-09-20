@@ -14,7 +14,20 @@ class MissingRedditCredentials(RuntimeError):
     pass
 
 
+class RedditApprovalRequired(RuntimeError):
+    pass
+
+
+def reddit_api_is_approved() -> bool:
+    return os.getenv("REDDIT_API_APPROVED", "").casefold() == "true"
+
+
 def create_reddit_client() -> praw.Reddit:
+    if not reddit_api_is_approved():
+        raise RedditApprovalRequired(
+            "Live Reddit API access is disabled. Set REDDIT_API_APPROVED=true only after "
+            "Reddit grants explicit approval."
+        )
     required = ("REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USER_AGENT")
     missing = [name for name in required if not os.getenv(name)]
     if missing:

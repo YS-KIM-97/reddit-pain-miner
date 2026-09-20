@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
-from reddit_pain_miner.collector import create_reddit_client
+from reddit_pain_miner.collector import create_reddit_client, reddit_api_is_approved
 from reddit_pain_miner.config import PipelineSettings
 
 
@@ -36,6 +36,15 @@ def run_checks(settings: PipelineSettings, *, live: bool = False) -> list[CheckR
             detail=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         )
     ]
+
+    approval_ready = reddit_api_is_approved()
+    checks.append(
+        CheckResult(
+            name="Reddit API approval",
+            ok=approval_ready,
+            detail="confirmed" if approval_ready else "pending; live access is locked",
+        )
+    )
 
     required_env = ("REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USER_AGENT")
     reddit_ready = all(_is_set(name) for name in required_env)
@@ -74,7 +83,7 @@ def run_checks(settings: PipelineSettings, *, live: bool = False) -> list[CheckR
         )
     )
 
-    if live and reddit_ready:
+    if live and reddit_ready and approval_ready:
         try:
             reddit = create_reddit_client()
             subreddit = reddit.subreddit(settings.reddit.subreddits[0])

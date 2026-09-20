@@ -17,7 +17,10 @@ def test_offline_pipeline_creates_outputs(tmp_path: Path) -> None:
         offline=True,
     )
     assert all(path.exists() for path in paths)
+    assert not (tmp_path / "signals.json").exists()
     assert "idea-1" in (tmp_path / "weekly-report.md").read_text(encoding="utf-8")
+    assert "post-sample1" not in (tmp_path / "ideas.json").read_text(encoding="utf-8")
+    assert "clients send receipts" not in (tmp_path / "ideas.json").read_text(encoding="utf-8")
 
 
 def test_offline_prd_enforces_small_scope() -> None:

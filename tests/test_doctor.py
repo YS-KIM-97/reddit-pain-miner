@@ -7,6 +7,7 @@ def test_doctor_reports_missing_credentials(monkeypatch, tmp_path) -> None:
         "REDDIT_CLIENT_ID",
         "REDDIT_CLIENT_SECRET",
         "REDDIT_USER_AGENT",
+        "REDDIT_API_APPROVED",
         "OPENAI_API_KEY",
         "SLACK_WEBHOOK_URL",
     ):
@@ -22,5 +23,6 @@ def test_doctor_reports_missing_credentials(monkeypatch, tmp_path) -> None:
     checks = run_checks(settings)
     output = format_checks(checks)
     assert not checks_passed(checks)
+    assert "Reddit API approval: pending" in output
     assert "missing: OPENAI_API_KEY" in output
     assert "Slack webhook: not configured (optional)" in output

@@ -17,3 +17,19 @@ def excerpt(text: str, limit: int = 1200) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 1].rstrip() + "…"
+
+
+def has_verbatim_overlap(source: str, candidate: str, minimum_words: int = 8) -> bool:
+    """Return true when candidate repeats a long source phrase verbatim."""
+    source_words = re.findall(r"[\w']+", source.casefold())
+    candidate_words = re.findall(r"[\w']+", candidate.casefold())
+    if len(source_words) < minimum_words or len(candidate_words) < minimum_words:
+        return False
+    source_ngrams = {
+        tuple(source_words[index : index + minimum_words])
+        for index in range(len(source_words) - minimum_words + 1)
+    }
+    return any(
+        tuple(candidate_words[index : index + minimum_words]) in source_ngrams
+        for index in range(len(candidate_words) - minimum_words + 1)
+    )

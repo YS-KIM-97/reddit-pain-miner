@@ -22,6 +22,7 @@ jobs:
       REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
       REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
       REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+      REDDIT_API_APPROVED: ${{ vars.REDDIT_API_APPROVED || 'false' }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5-mini' }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -33,14 +34,20 @@ jobs:
           cache: pip
       - run: python -m pip install .
       - name: Run live weekly pipeline
-        if: ${{ !inputs.offline }}
+        if: ${{ !inputs.offline && vars.REDDIT_API_APPROVED == 'true' }}
         run: reddit-pain run
+      - name: Keep live collection locked pending Reddit approval
+        if: ${{ !inputs.offline && vars.REDDIT_API_APPROVED != 'true' }}
+        run: echo "Live Reddit collection is disabled until REDDIT_API_APPROVED=true."
       - name: Run offline smoke pipeline
         if: ${{ inputs.offline }}
         run: reddit-pain run --offline --input examples/sample_signals.json
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.offline || vars.REDDIT_API_APPROVED == 'true' }}
         with:
           name: weekly-pain-report-${{ github.run_number }}
-          path: artifacts/
+          path: |
+            artifacts/ideas.json
+            artifacts/weekly-report.md
           if-no-files-found: error
           retention-days: 30

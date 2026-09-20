@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from reddit_pain_miner.analyzer import AnalysisError, analyze_offline, analyze_with_openai
-from reddit_pain_miner.collector import MissingRedditCredentials, collect_signals
+from reddit_pain_miner.collector import MissingRedditCredentials, RedditApprovalRequired
 from reddit_pain_miner.config import PipelineSettings
 from reddit_pain_miner.doctor import checks_passed, format_checks, run_checks
 from reddit_pain_miner.io import write_json, write_text
@@ -27,11 +27,8 @@ def _parser() -> argparse.ArgumentParser:
     doctor = subcommands.add_parser("doctor", help="Check local credentials and API access")
     doctor.add_argument("--live", action="store_true", help="Make read-only API checks")
 
-    collect = subcommands.add_parser("collect", help="Collect weekly Reddit pain signals")
-    collect.add_argument("--output", type=Path, default=Path("artifacts/signals.json"))
-
     analyze = subcommands.add_parser("analyze", help="Turn signals into ranked app ideas")
-    analyze.add_argument("--input", type=Path, default=Path("artifacts/signals.json"))
+    analyze.add_argument("--input", type=Path, required=True)
     analyze.add_argument("--output", type=Path, default=Path("artifacts/ideas.json"))
     analyze.add_argument("--offline", action="store_true")
 
@@ -59,12 +56,6 @@ def _execute(args: argparse.Namespace) -> None:
         print(format_checks(checks))
         if not checks_passed(checks):
             raise SystemExit(2)
-        return
-
-    if args.command == "collect":
-        signals = collect_signals(settings.reddit)
-        write_json(args.output, signals)
-        print(f"Collected {len(signals)} signals -> {args.output}")
         return
 
     if args.command == "analyze":
@@ -124,6 +115,7 @@ def main() -> None:
         AnalysisError,
         FileNotFoundError,
         MissingRedditCredentials,
+        RedditApprovalRequired,
         SpecError,
         ValidationError,
         ValueError,

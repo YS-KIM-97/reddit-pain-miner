@@ -22,7 +22,6 @@ def idea_report_markdown(report: IdeaReport) -> str:
                 f"- 수익화: {idea.monetization}",
                 f"- 검증: {idea.validation_test}",
                 f"- 핵심 위험: {idea.key_risk}",
-                f"- 근거: {', '.join(idea.evidence_signal_ids)}",
                 "",
             ]
         )

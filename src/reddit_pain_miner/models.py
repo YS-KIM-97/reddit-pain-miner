@@ -49,15 +49,20 @@ class AppIdea(BaseModel):
     target_user: str
     problem: str
     core_feature: str
-    evidence_signal_ids: list[str] = Field(min_length=1)
     validation_test: str
     monetization: str
     key_risk: str
     score: ScoreCard
 
 
+class EvidenceBackedAppIdea(AppIdea):
+    """Transient model used to validate grounding before persistence."""
+
+    evidence_signal_ids: list[str] = Field(min_length=1)
+
+
 class IdeaBatch(BaseModel):
-    ideas: list[AppIdea]
+    ideas: list[EvidenceBackedAppIdea]
 
 
 class IdeaReport(BaseModel):

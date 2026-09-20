@@ -1,8 +1,10 @@
 # Reddit Pain Miner
 
+> Reddit API reviewers: see [application summary](docs/reddit-api-application.md), [data handling and retention](docs/data-retention.md), and [architecture](docs/architecture.md).
+
 매주 Reddit의 반복적인 불편을 수집해, 근거가 연결된 앱 아이디어 3개와 7일짜리 MVP PRD를 만드는 최소 자동화 저장소입니다.
 
-현재 구현 범위는 **수집 → 키워드 필터 → OpenAI 구조화 분석 → Markdown 리포트 → 선택 아이디어 PRD**입니다. 앱 코드 생성과 배포는 검증된 아이디어를 선택한 다음 단계로 의도적으로 분리했습니다.
+현재 구현 범위는 **수집 → 키워드 필터 → OpenAI 구조화 분석 → Markdown 리포트 → 선택 아이디어 PRD**입니다. 정기 실행은 Reddit 원문을 디스크에 저장하지 않으며, 장기 보관 결과에는 콘텐츠 ID와 장문 인용을 포함하지 않습니다. 앱 코드 생성과 배포는 검증된 아이디어를 선택한 다음 단계로 의도적으로 분리했습니다.
 
 ## 5분 시작
 
@@ -21,7 +23,7 @@ reddit-pain run --offline --input examples/sample_signals.json
 reddit-pain prd --offline --idea-id idea-1
 ```
 
-결과는 `artifacts/`에 생성됩니다.
+비식별 결과는 `artifacts/`에 생성됩니다.
 
 ## 실제 데이터로 실행
 
@@ -34,17 +36,11 @@ reddit-pain doctor
 reddit-pain doctor --live
 ```
 
-4. 다음 명령을 실행합니다.
-
 Reddit User-Agent는 `script:weekly-pain-miner:v0.1.0 (by /u/사용자명)` 형식을 사용합니다.
 
-```bash
-reddit-pain collect
-reddit-pain analyze
-reddit-pain report
-```
+`REDDIT_API_APPROVED`는 Reddit의 명시적 승인을 받기 전까지 반드시 `false`로 유지합니다. 승인 후에만 로컬 `.env`와 GitHub Actions variable을 `true`로 변경합니다. 코드와 예약 워크플로 모두 이 값이 없으면 라이브 수집을 실행하지 않습니다.
 
-한 번에 실행하려면:
+4. 승인 후 라이브 파이프라인을 실행합니다.
 
 ```bash
 reddit-pain run
@@ -56,7 +52,7 @@ reddit-pain run
 reddit-pain prd --idea-id idea-1
 ```
 
-온라인 분석은 OpenAI Responses API의 Structured Outputs를 사용하며 API로 보내는 원문은 저장하지 않도록 `store=False`를 지정합니다. Reddit에서는 키워드와 일치한 공개 게시물/댓글의 짧은 발췌만 저장하고 작성자 정보는 저장하지 않습니다.
+온라인 분석은 OpenAI Responses API의 Structured Outputs를 사용하며 API로 보내는 원문은 저장하지 않도록 `store=False`를 지정합니다. Reddit 작성자 정보는 수집하지 않습니다. 라이브 수집 결과를 파일로 내보내는 명령은 제공하지 않으며, 정기 `run`은 일치한 발췌를 메모리에서만 처리합니다.
 
 ## 자동화
 
@@ -70,22 +66,22 @@ reddit-pain prd --idea-id idea-1
 
 모델은 Actions variable `OPENAI_MODEL`로 바꿀 수 있습니다. Slack 전송을 사용하려면 `config/pipeline.yaml`의 `notify_slack`을 `true`로 변경합니다.
 
-워크플로는 리포트와 JSON을 30일간 GitHub Actions artifact로 보관합니다. 수동 실행에서 `offline`을 선택하면 secret 없이 샘플 데이터로 smoke test를 수행합니다.
+워크플로는 비식별·비인용 리포트와 아이디어 JSON만 30일간 GitHub Actions artifact로 보관합니다. Reddit 원문이나 콘텐츠 ID는 업로드하지 않습니다. 수동 실행에서 `offline`을 선택하면 secret 없이 샘플 데이터로 smoke test를 수행합니다.
 
 ## 설계 원칙
 
-- **근거 추적:** 모든 아이디어는 실제 `signal ID`를 참조해야 합니다.
+- **근거 추적:** 생성 시 모든 아이디어의 `signal ID`를 메모리에서 검증한 뒤 ID를 폐기합니다.
 - **명시적 실패:** API 오류를 오프라인 결과로 몰래 대체하지 않습니다.
 - **작은 범위:** PRD는 핵심 기능 하나만 허용하고 팀 기능, 피드, 관리자 화면 등을 제외합니다.
 - **사람의 선택:** 자동으로 앱을 생성하기 전에 사람이 아이디어 하나를 선택합니다.
+- **승인 게이트:** Reddit의 명시적 승인 없이는 라이브 API 클라이언트를 생성하지 않습니다.
 - **PWA 우선:** 검증과 앱 템플릿 생성은 다음 마일스톤에서 연결합니다.
 
 ## 명령어
 
 ```text
-reddit-pain collect                         Reddit 주간 신호 수집
 reddit-pain doctor [--live]                 자격 증명과 API 접근 진단
-reddit-pain analyze [--offline]             신호를 앱 아이디어로 변환
+reddit-pain analyze --input FILE [--offline] 합성·승인된 입력을 앱 아이디어로 변환
 reddit-pain report                          Markdown 리포트 렌더링
 reddit-pain prd --idea-id idea-1 [--offline] 선택 아이디어의 MVP PRD 생성
 reddit-pain run [--input FILE] [--offline]   수집부터 리포트까지 실행
