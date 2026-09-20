@@ -36,6 +36,8 @@ reddit-pain doctor --live
 
 4. 다음 명령을 실행합니다.
 
+Reddit User-Agent는 `script:weekly-pain-miner:v0.1.0 (by /u/사용자명)` 형식을 사용합니다.
+
 ```bash
 reddit-pain collect
 reddit-pain analyze
