@@ -37,7 +37,7 @@ GitHub의 **Actions → Public research demo → Run workflow**에서도 같은 
 
 ## ClaimSnap PWA MVP
 
-연구 시나리오에서 가장 높은 점수를 받은 `ClaimSnap`의 첫 PWA가 `web/`에 있습니다. 영수증 이미지를 서버로 보내지 않고 브라우저의 Tesseract.js OCR로 읽은 뒤, 상호·날짜·금액·분류·설명을 수정하고 경비 한 줄로 확정합니다.
+연구 시나리오에서 가장 높은 점수를 받은 `ClaimSnap`의 첫 PWA가 `web/`에 있습니다. 한 번에 최대 10장의 영수증 이미지를 서버로 보내지 않고 브라우저의 Tesseract.js OCR로 순차 처리한 뒤, 각 이미지의 상호·날짜·금액·분류·설명을 수정하고 경비 한 줄로 확정합니다.
 
 ```bash
 make web-install

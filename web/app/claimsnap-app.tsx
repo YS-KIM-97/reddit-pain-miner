@@ -3,6 +3,8 @@
 import {
   ArrowRight,
   Check,
+  ChevronLeft,
+  ChevronRight,
   FileCheck2,
   ImagePlus,
   LoaderCircle,
@@ -30,7 +32,16 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { ExpenseDraft, parseReceipt } from "@/lib/receipt-parser";
 
-type SavedExpense = ExpenseDraft & { id: number };
+type SavedExpense = ExpenseDraft & { id: number; sourceResultId?: string };
+
+type BatchResult = {
+  id: string;
+  fileName: string;
+  previewUrl: string;
+  draft: ExpenseDraft;
+  confidence: number | null;
+  saved: boolean;
+};
 
 type WebMCPContext = {
   registerTool: (
@@ -71,7 +82,7 @@ function formatMoney(amount: string, currency: ExpenseDraft["currency"]) {
 
 export function ClaimSnapApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const objectUrlRef = useRef<string | null>(null);
+  const objectUrlsRef = useRef<string[]>([]);
   const [draft, setDraft] = useState<ExpenseDraft>(emptyDraft);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
@@ -81,13 +92,16 @@ export function ClaimSnapApp() {
     "idle",
   );
   const [savedExpenses, setSavedExpenses] = useState<SavedExpense[]>([]);
+  const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
+  const [selectedResultIndex, setSelectedResultIndex] = useState(-1);
+  const [batchPosition, setBatchPosition] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
     return () => {
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
 
@@ -165,21 +179,35 @@ export function ClaimSnapApp() {
 
   const updateDraft = (field: keyof ExpenseDraft, value: string) => {
     setDraft((current) => ({ ...current, [field]: value }));
+    if (selectedResultIndex >= 0) {
+      setBatchResults((current) =>
+        current.map((result, index) =>
+          index === selectedResultIndex
+            ? { ...result, draft: { ...result.draft, [field]: value }, saved: false }
+            : result,
+        ),
+      );
+      setStatus("review");
+    }
   };
 
   const reset = () => {
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-    objectUrlRef.current = null;
+    objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    objectUrlsRef.current = [];
     setPreviewUrl(null);
     setFileName("");
     setDraft(emptyDraft);
     setProgress(0);
     setConfidence(null);
+    setBatchResults([]);
+    setSelectedResultIndex(-1);
+    setBatchPosition({ current: 0, total: 0 });
     setStatus("idle");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const useDemo = () => {
+    reset();
     setDraft({
       merchant: "모닝 브루 성수",
       date: today(),
@@ -195,28 +223,47 @@ export function ClaimSnapApp() {
     setStatus("review");
   };
 
-  const processFile = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      toast.error("JPG, PNG 또는 WebP 이미지로 올려주세요.");
-      return;
+  const selectBatchResult = (index: number, results = batchResults) => {
+    const result = results[index];
+    if (!result) return;
+    setSelectedResultIndex(index);
+    setDraft(result.draft);
+    setPreviewUrl(result.previewUrl);
+    setFileName(result.fileName);
+    setConfidence(result.confidence);
+    setProgress(100);
+    setStatus(result.saved ? "saved" : "review");
+  };
+
+  const processFiles = async (incomingFiles: File[]) => {
+    const supportedFiles = incomingFiles.filter(
+      (file) => file.type.startsWith("image/") && file.size <= 10 * 1024 * 1024,
+    );
+    if (supportedFiles.length !== incomingFiles.length) {
+      toast.warning("이미지가 아니거나 10MB를 넘는 파일은 제외했어요.");
     }
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("이미지는 10MB보다 작아야 합니다.");
-      return;
-    }
+    const files = supportedFiles.slice(0, 10);
+    if (supportedFiles.length > 10) toast.warning("한 번에 최대 10장까지 처리할 수 있어요.");
+    if (!files.length) return;
 
     reset();
-    const objectUrl = URL.createObjectURL(file);
-    objectUrlRef.current = objectUrl;
-    setPreviewUrl(objectUrl);
-    setFileName(file.name);
+    const prepared = files.map((file, index) => ({
+      file,
+      id: `${Date.now()}-${index}`,
+      previewUrl: URL.createObjectURL(file),
+    }));
+    objectUrlsRef.current = prepared.map((item) => item.previewUrl);
+    setPreviewUrl(prepared[0].previewUrl);
+    setFileName(prepared[0].file.name);
+    setBatchPosition({ current: 1, total: prepared.length });
     setStatus("reading");
-    setProgress(6);
+    setProgress(4);
 
+    const results: BatchResult[] = [];
     let worker: import("tesseract.js").Worker | null = null;
+    let ocrPass = 0;
     try {
       const { createWorker, OEM, PSM } = await import("tesseract.js");
-      let ocrPass = 0;
       worker = await createWorker(["kor", "eng"], OEM.LSTM_ONLY, {
         logger: (message) => {
           if (typeof message.progress === "number") {
@@ -224,41 +271,77 @@ export function ClaimSnapApp() {
           }
         },
       });
-      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
-      const blockResult = await worker.recognize(file);
-      ocrPass = 1;
-      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN });
-      const columnResult = await worker.recognize(file);
-      const text = `${columnResult.data.text}\n${blockResult.data.text}`.trim();
-      setDraft(text ? parseReceipt(text) : { ...emptyDraft, date: today() });
-      setConfidence(Math.round(Math.max(blockResult.data.confidence, columnResult.data.confidence)));
-      setProgress(100);
-      setStatus("review");
-      if (text) {
-        toast.success("읽기가 끝났어요. 값이 맞는지 확인해 주세요.");
-      } else {
-        toast.warning("글자를 찾지 못했어요. 값을 직접 입력해 주세요.");
+
+      for (let index = 0; index < prepared.length; index += 1) {
+        const item = prepared[index];
+        setBatchPosition({ current: index + 1, total: prepared.length });
+        setPreviewUrl(item.previewUrl);
+        setFileName(item.file.name);
+        setProgress(4);
+        ocrPass = 0;
+        try {
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
+          const blockResult = await worker.recognize(item.file);
+          ocrPass = 1;
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN });
+          const columnResult = await worker.recognize(item.file);
+          const text = `${columnResult.data.text}\n${blockResult.data.text}`.trim();
+          results.push({
+            id: item.id,
+            fileName: item.file.name,
+            previewUrl: item.previewUrl,
+            draft: text ? parseReceipt(text) : { ...emptyDraft, description: item.file.name },
+            confidence: Math.round(
+              Math.max(blockResult.data.confidence, columnResult.data.confidence),
+            ),
+            saved: false,
+          });
+        } catch {
+          results.push({
+            id: item.id,
+            fileName: item.file.name,
+            previewUrl: item.previewUrl,
+            draft: { ...emptyDraft, description: item.file.name },
+            confidence: null,
+            saved: false,
+          });
+        }
+        setBatchResults([...results]);
       }
     } catch {
-      setDraft({ ...emptyDraft, date: today(), description: file.name });
-      setConfidence(null);
-      setProgress(100);
-      setStatus("review");
-      toast.warning("자동 인식에 실패했어요. 값을 직접 입력할 수 있습니다.");
+      for (const item of prepared.slice(results.length)) {
+        results.push({
+          id: item.id,
+          fileName: item.file.name,
+          previewUrl: item.previewUrl,
+          draft: { ...emptyDraft, description: item.file.name },
+          confidence: null,
+          saved: false,
+        });
+      }
     } finally {
       await worker?.terminate();
+    }
+
+    setBatchResults(results);
+    selectBatchResult(0, results);
+    const failedCount = results.filter((result) => result.confidence === null).length;
+    if (failedCount) {
+      toast.warning(`${results.length}장 중 ${failedCount}장은 값을 직접 확인해 주세요.`);
+    } else {
+      toast.success(`${results.length}장을 모두 읽었어요. 결과를 확인해 주세요.`);
     }
   };
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) void processFile(file);
+    const files = Array.from(event.target.files ?? []);
+    if (files.length) void processFiles(files);
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const file = event.dataTransfer.files?.[0];
-    if (file) void processFile(file);
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length) void processFiles(files);
   };
 
   const saveExpense = () => {
@@ -266,9 +349,40 @@ export function ClaimSnapApp() {
       toast.error("상호, 날짜, 금액을 확인해 주세요.");
       return;
     }
-    setSavedExpenses((current) => [{ ...draft, id: Date.now() }, ...current]);
+    const sourceResultId = batchResults[selectedResultIndex]?.id;
+    setSavedExpenses((current) => {
+      const existing = sourceResultId
+        ? current.find((expense) => expense.sourceResultId === sourceResultId)
+        : undefined;
+      if (existing) {
+        return current.map((expense) =>
+          expense.id === existing.id ? { ...draft, id: existing.id, sourceResultId } : expense,
+        );
+      }
+      return [{ ...draft, id: Date.now(), sourceResultId }, ...current];
+    });
+    if (selectedResultIndex >= 0) {
+      setBatchResults((current) =>
+        current.map((result, index) =>
+          index === selectedResultIndex ? { ...result, draft, saved: true } : result,
+        ),
+      );
+    }
     setStatus("saved");
     toast.success("경비 한 줄을 확정했습니다.");
+  };
+
+  const removeSavedExpense = (expense: SavedExpense) => {
+    setSavedExpenses((current) => current.filter((item) => item.id !== expense.id));
+    if (expense.sourceResultId) {
+      setBatchResults((current) =>
+        current.map((result) =>
+          result.id === expense.sourceResultId ? { ...result, saved: false } : result,
+        ),
+      );
+      const selectedResult = batchResults[selectedResultIndex];
+      if (selectedResult?.id === expense.sourceResultId) setStatus("review");
+    }
   };
 
   const formattedAmount = draft.amount
@@ -321,11 +435,17 @@ export function ClaimSnapApp() {
                 <span className="step-number">1</span>
                 <div>
                   <h2 className="font-bold tracking-tight">영수증 올리기</h2>
-                  <p className="text-sm text-muted-foreground">JPG, PNG, WebP · 최대 10MB</p>
+                  <p className="text-sm text-muted-foreground">최대 10장 · 장당 10MB</p>
                 </div>
               </div>
               {status !== "idle" && (
-                <Button variant="ghost" size="icon" onClick={reset} aria-label="영수증 초기화">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={reset}
+                  disabled={status === "reading"}
+                  aria-label="영수증 초기화"
+                >
                   <RotateCcw aria-hidden="true" />
                 </Button>
               )}
@@ -342,7 +462,7 @@ export function ClaimSnapApp() {
                     ref={fileInputRef}
                     type="file"
                     accept="image/*"
-                    capture="environment"
+                    multiple
                     onChange={onFileChange}
                     className="sr-only"
                     id="receipt-upload"
@@ -351,9 +471,9 @@ export function ClaimSnapApp() {
                     <ReceiptText className="size-9" />
                   </div>
                   <div className="mt-6 text-center">
-                    <p className="text-lg font-bold">영수증을 여기에 놓으세요</p>
+                    <p className="text-lg font-bold">영수증 여러 장을 여기에 놓으세요</p>
                     <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      모바일에서는 카메라로 바로 촬영할 수 있습니다.
+                      한 번에 최대 10장을 선택해 순서대로 읽습니다.
                     </p>
                   </div>
                   <Button
@@ -362,7 +482,7 @@ export function ClaimSnapApp() {
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <ImagePlus aria-hidden="true" />
-                    이미지 선택
+                    이미지 여러 장 선택
                   </Button>
                   <button
                     type="button"
@@ -394,7 +514,11 @@ export function ClaimSnapApp() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold">{fileName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {status === "reading" ? "글자를 읽고 있어요" : "이미지 준비 완료"}
+                        {status === "reading"
+                          ? `${batchPosition.current}/${batchPosition.total} · 글자를 읽고 있어요`
+                          : batchResults.length > 1
+                            ? `${selectedResultIndex + 1}/${batchResults.length} · 이미지 준비 완료`
+                            : "이미지 준비 완료"}
                       </p>
                     </div>
                     {status === "reading" ? (
@@ -408,7 +532,9 @@ export function ClaimSnapApp() {
               {status === "reading" && (
                 <div className="mt-5" aria-live="polite">
                   <div className="mb-2 flex justify-between text-sm font-semibold">
-                    <span>영수증 읽는 중</span>
+                    <span>
+                      {batchPosition.current}/{batchPosition.total}번째 영수증 읽는 중
+                    </span>
                     <span>{progress}%</span>
                   </div>
                   <Progress value={progress} className="h-2.5" />
@@ -429,7 +555,7 @@ export function ClaimSnapApp() {
               {status === "reading" ? (
                 <span className="flex items-center gap-2 rounded-full bg-[#eaf3ff] px-3 py-1.5 text-xs font-bold text-primary">
                   <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                  분석 중 {progress}%
+                  분석 중 {batchPosition.current}/{batchPosition.total} · {progress}%
                 </span>
               ) : confidence !== null ? (
                 <span className="rounded-full bg-[#eaf3ff] px-3 py-1.5 text-xs font-bold text-primary">
@@ -459,6 +585,11 @@ export function ClaimSnapApp() {
                         <ScanLine className="size-5 animate-pulse" aria-hidden="true" />
                       </div>
                       <div className="min-w-0 flex-1">
+                        {batchPosition.total > 1 && (
+                          <p className="mb-1 text-xs font-black uppercase tracking-[0.12em] text-primary">
+                            영수증 {batchPosition.current}/{batchPosition.total}
+                          </p>
+                        )}
                         <p className="text-base font-black tracking-tight">
                           {progress < 50 ? "1차 · 글자 영역을 읽고 있어요" : "2차 · 날짜와 합계를 확인하고 있어요"}
                         </p>
@@ -483,6 +614,34 @@ export function ClaimSnapApp() {
                 </div>
               ) : (
                 <div className="space-y-5">
+                  {batchResults.length > 1 && (
+                    <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted/40 p-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => selectBatchResult(selectedResultIndex - 1)}
+                        disabled={selectedResultIndex <= 0}
+                        aria-label="이전 영수증"
+                      >
+                        <ChevronLeft aria-hidden="true" />
+                      </Button>
+                      <div className="min-w-0 flex-1 text-center">
+                        <p className="truncate text-sm font-bold">{fileName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {selectedResultIndex + 1}/{batchResults.length}번째 결과
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => selectBatchResult(selectedResultIndex + 1)}
+                        disabled={selectedResultIndex >= batchResults.length - 1}
+                        aria-label="다음 영수증"
+                      >
+                        <ChevronRight aria-hidden="true" />
+                      </Button>
+                    </div>
+                  )}
                   <div className="grid gap-5 sm:grid-cols-2">
                     <Field>
                       <FieldLabel htmlFor="merchant">상호</FieldLabel>
@@ -580,6 +739,7 @@ export function ClaimSnapApp() {
                     size="lg"
                     className="h-14 w-full rounded-2xl text-base font-bold shadow-[0_14px_30px_rgba(30,77,216,.2)]"
                     onClick={saveExpense}
+                    disabled={status === "saved"}
                   >
                     <FileCheck2 aria-hidden="true" />
                     {status === "saved" ? "확정 완료" : "경비 한 줄 확정"}
@@ -589,6 +749,62 @@ export function ClaimSnapApp() {
             </div>
           </section>
         </div>
+
+        {batchResults.length > 1 && status !== "reading" && (
+          <section className="mt-5 rounded-[28px] border border-border bg-card p-5 shadow-[0_24px_70px_rgba(15,34,58,.06)] sm:p-7">
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-primary">일괄 인식 완료</p>
+                <h2 className="mt-1 text-xl font-black tracking-tight">영수증별 추출 결과</h2>
+              </div>
+              <span className="rounded-full bg-muted px-3 py-1 text-sm font-bold">
+                {batchResults.filter((result) => result.saved).length}/{batchResults.length}건 확정
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {batchResults.map((result, index) => (
+                <button
+                  key={result.id}
+                  type="button"
+                  onClick={() => selectBatchResult(index)}
+                  className={`rounded-2xl border p-4 text-left transition hover:border-primary/50 hover:bg-[#f7faff] ${
+                    index === selectedResultIndex
+                      ? "border-primary bg-[#f2f7ff] shadow-[0_10px_30px_rgba(30,77,216,.1)]"
+                      : "border-border bg-background"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-xs font-bold text-muted-foreground">
+                      {index + 1}. {result.fileName}
+                    </p>
+                    {result.saved ? (
+                      <span className="shrink-0 rounded-full bg-[#e9ffd0] px-2 py-0.5 text-[11px] font-black text-[#315d00]">
+                        확정
+                      </span>
+                    ) : result.confidence !== null ? (
+                      <span className="shrink-0 text-xs font-bold text-primary">
+                        {result.confidence}%
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-3 truncate font-black">
+                    {result.draft.merchant || "상호 미확인"}
+                  </p>
+                  <div className="mt-1 flex items-center justify-between gap-3 text-sm">
+                    <span className="truncate text-muted-foreground">
+                      {result.draft.date || "날짜 미확인"}
+                    </span>
+                    <span className="shrink-0 font-black">
+                      {result.draft.amount
+                        ? formatMoney(result.draft.amount, result.draft.currency)
+                        : "금액 미확인"}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {savedExpenses.length > 0 && (
           <section className="mt-5 rounded-[28px] border border-border bg-card p-5 shadow-[0_24px_70px_rgba(15,34,58,.06)] sm:p-7">
@@ -617,11 +833,7 @@ export function ClaimSnapApp() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() =>
-                      setSavedExpenses((current) =>
-                        current.filter((item) => item.id !== expense.id),
-                      )
-                    }
+                    onClick={() => removeSavedExpense(expense)}
                     aria-label={`${expense.merchant} 경비 삭제`}
                   >
                     <Trash2 aria-hidden="true" />
