@@ -154,3 +154,18 @@ test("uses field agreement instead of exposing raw OCR confidence", () => {
   });
   assert.ok(result.confidence >= 80);
 });
+
+test("prioritizes user-provided final-price labels", () => {
+  for (const label of [
+    "결재 금액",
+    "결제 금액",
+    "합계",
+    "합계 금액",
+    "TOTAL",
+    "결재 대상 금액",
+    "결제 대상 금액",
+  ]) {
+    const parsed = parseReceipt(`테스트 식당\n상품 금액 18,000원\n부가세 1,800원\n${label} 19,800원`);
+    assert.equal(parsed.amount, "19800", label);
+  }
+});

@@ -7,8 +7,10 @@ export type ExpenseDraft = {
   description: string;
 };
 
+const FINAL_TOTAL_WORDS =
+  /\btotal\b|결[재제]\s*(?:대상\s*)?금액|합\s*계(?:\s*금액)?/i;
 const TOTAL_WORDS =
-  /total|amount|grand|tong\s*cong|합\s*계|총\s*(?:액|구매액|매출액)|결제|받을금액|판매금액|거래금액/i;
+  /total|amount|grand|tong\s*cong|합\s*계|총\s*(?:액|구매액|매출액)|결[재제]|받을금액|판매금액|거래금액/i;
 const TAX_WORDS = /과\s*세|부\s*가\s*세|면\s*세|공급가액/i;
 const NON_MERCHANT_WORDS =
   /영수증|receipt|고객용|사업자|대표자|전화|tel|주소|date|일시|카드|판매|상품명|품명|수량|단가|금액|교환|환불|결제|지참|구매|신선|고객센터|p[o0]s/i;
@@ -195,7 +197,9 @@ function extractKrwAmount(lines: string[]) {
       const hasCurrency = /^[₩￦Ww]/.test(match.trim());
       let score = (lineIndex / Math.max(lines.length - 1, 1)) * 6 + 2;
       const nearbyLabel = lines.slice(Math.max(0, lineIndex - 2), lineIndex + 1).join(" ");
-      if (TOTAL_WORDS.test(line)) score += 12;
+      if (FINAL_TOTAL_WORDS.test(line)) score += 20;
+      else if (FINAL_TOTAL_WORDS.test(nearbyLabel)) score += 15;
+      else if (TOTAL_WORDS.test(line)) score += 12;
       else if (TOTAL_WORDS.test(nearbyLabel)) score += 9;
       if (hasCurrency) score += 6;
       if (TAX_WORDS.test(line)) score -= 4;
