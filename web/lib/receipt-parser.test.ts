@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractDate, parseReceipt } from "./receipt-parser.ts";
+import { analyzeReceiptPasses, extractDate, parseReceipt } from "./receipt-parser.ts";
 
 const sevenElevenOcr = `
 AnH 7등 편으 으/짐 Fl
@@ -104,4 +104,53 @@ test("leaves the merchant blank when a cropped receipt only contains policy text
     category: "기타",
     description: "영수증 경비",
   });
+});
+
+test("parses compact and two-digit receipt dates", () => {
+  assert.equal(extractDate("거래일시 25/11/25 14:17:55"), "2025-11-25");
+  assert.equal(extractDate("판매일자 20241218"), "2024-12-18");
+});
+
+test("recognizes common merchants and ungrouped labeled totals", () => {
+  assert.deepEqual(
+    parseReceipt("CU 종암도점\n2025-10-14\n총구매액 3 6000원"),
+    {
+      merchant: "CU 종암도점",
+      date: "2025-10-14",
+      amount: "6000",
+      currency: "KRW",
+      category: "식비",
+      description: "CU 종암도점 영수증",
+    },
+  );
+});
+
+test("detects Vietnamese dong receipts", () => {
+  assert.deepEqual(
+    parseReceipt("LOTTE Mart DA NANG\n2025-10-22\nTong cong 994,000"),
+    {
+      merchant: "롯데마트",
+      date: "2025-10-22",
+      amount: "994000",
+      currency: "VND",
+      category: "기타",
+      description: "롯데마트 영수증",
+    },
+  );
+});
+
+test("uses field agreement instead of exposing raw OCR confidence", () => {
+  const result = analyzeReceiptPasses([
+    { text: "스타벅스\n2020-12-19\n총결제금액 18,300원", confidence: 43 },
+    { text: "STARBUCKS\n2020/12/19\n합계 18,300", confidence: 51 },
+  ]);
+  assert.deepEqual(result.draft, {
+    merchant: "스타벅스",
+    date: "2020-12-19",
+    amount: "18300",
+    currency: "KRW",
+    category: "식비",
+    description: "스타벅스 영수증",
+  });
+  assert.ok(result.confidence >= 80);
 });

@@ -30,7 +30,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
-import { ExpenseDraft, parseReceipt } from "@/lib/receipt-parser";
+import { prepareReceiptImages } from "@/lib/receipt-image";
+import { analyzeReceiptPasses, ExpenseDraft } from "@/lib/receipt-parser";
 
 type SavedExpense = ExpenseDraft & { id: number; sourceResultId?: string };
 
@@ -73,11 +74,18 @@ function today() {
 }
 
 function formatMoney(amount: string, currency: ExpenseDraft["currency"]) {
-  return new Intl.NumberFormat(currency === "USD" ? "en-US" : "ko-KR", {
+  const locale = currency === "USD" ? "en-US" : currency === "VND" ? "vi-VN" : "ko-KR";
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
     maximumFractionDigits: currency === "USD" ? 2 : 0,
   }).format(Number(amount));
+}
+
+function currencySuffix(currency: ExpenseDraft["currency"]) {
+  if (currency === "USD") return "$";
+  if (currency === "VND") return "₫";
+  return "원";
 }
 
 export function ClaimSnapApp() {
@@ -267,7 +275,7 @@ export function ClaimSnapApp() {
       worker = await createWorker(["kor", "eng"], OEM.LSTM_ONLY, {
         logger: (message) => {
           if (typeof message.progress === "number") {
-            setProgress(Math.max(8, Math.round(((ocrPass + message.progress) / 2) * 100)));
+            setProgress(Math.max(14, Math.round(((ocrPass + message.progress) / 2) * 100)));
           }
         },
       });
@@ -280,20 +288,23 @@ export function ClaimSnapApp() {
         setProgress(4);
         ocrPass = 0;
         try {
+          const preparedImages = await prepareReceiptImages(item.file);
+          setProgress(14);
           await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
-          const blockResult = await worker.recognize(item.file);
+          const blockResult = await worker.recognize(preparedImages.enhanced);
           ocrPass = 1;
-          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN });
-          const columnResult = await worker.recognize(item.file);
-          const text = `${columnResult.data.text}\n${blockResult.data.text}`.trim();
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+          const columnResult = await worker.recognize(preparedImages.thresholded);
+          const analysis = analyzeReceiptPasses([
+            { text: blockResult.data.text, confidence: blockResult.data.confidence },
+            { text: columnResult.data.text, confidence: columnResult.data.confidence },
+          ]);
           results.push({
             id: item.id,
             fileName: item.file.name,
             previewUrl: item.previewUrl,
-            draft: text ? parseReceipt(text) : { ...emptyDraft, description: item.file.name },
-            confidence: Math.round(
-              Math.max(blockResult.data.confidence, columnResult.data.confidence),
-            ),
+            draft: analysis.draft,
+            confidence: analysis.confidence,
             saved: false,
           });
         } catch {
@@ -559,7 +570,7 @@ export function ClaimSnapApp() {
                 </span>
               ) : confidence !== null ? (
                 <span className="rounded-full bg-[#eaf3ff] px-3 py-1.5 text-xs font-bold text-primary">
-                  인식 신뢰도 {confidence}%
+                  추출 신뢰도 {confidence}%
                 </span>
               ) : null}
             </div>
@@ -591,12 +602,18 @@ export function ClaimSnapApp() {
                           </p>
                         )}
                         <p className="text-base font-black tracking-tight">
-                          {progress < 50 ? "1차 · 글자 영역을 읽고 있어요" : "2차 · 날짜와 합계를 확인하고 있어요"}
+                          {progress < 14
+                            ? "사진에서 영수증 영역을 보정하고 있어요"
+                            : progress < 50
+                              ? "1차 · 글자 영역을 읽고 있어요"
+                              : "2차 · 날짜와 합계를 확인하고 있어요"}
                         </p>
                         <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                          {progress < 50
-                            ? "상호와 영수증 전체 문자를 찾는 중입니다."
-                            : "다른 방식으로 한 번 더 읽어 숫자를 교차 검증합니다."}
+                          {progress < 14
+                            ? "배경을 줄이고 글자가 잘 보이도록 확대·명암 보정합니다."
+                            : progress < 50
+                              ? "보정한 이미지에서 상호와 전체 문자를 찾는 중입니다."
+                              : "그림자를 제거한 이미지로 한 번 더 읽어 필드를 교차 검증합니다."}
                         </p>
                         <div className="mt-4 flex items-center gap-3">
                           <Progress value={progress} className="h-2.5 flex-1" />
@@ -683,7 +700,7 @@ export function ClaimSnapApp() {
                           className="h-12 rounded-xl px-4 pr-10 text-lg font-bold"
                         />
                         <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted-foreground">
-                          {draft.currency === "USD" ? "$" : "원"}
+                          {currencySuffix(draft.currency)}
                         </span>
                       </div>
                     </Field>

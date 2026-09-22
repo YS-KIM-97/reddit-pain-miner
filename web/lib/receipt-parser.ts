@@ -2,15 +2,16 @@ export type ExpenseDraft = {
   merchant: string;
   date: string;
   amount: string;
-  currency: "KRW" | "USD";
+  currency: "KRW" | "USD" | "VND";
   category: string;
   description: string;
 };
 
-const TOTAL_WORDS = /total|amount|grand|합\s*계|총\s*액|결제|받을금액|판매금액/i;
+const TOTAL_WORDS =
+  /total|amount|grand|tong\s*cong|합\s*계|총\s*(?:액|구매액|매출액)|결제|받을금액|판매금액|거래금액/i;
 const TAX_WORDS = /과\s*세|부\s*가\s*세|면\s*세|공급가액/i;
 const NON_MERCHANT_WORDS =
-  /영수증|receipt|사업자|대표자|전화|tel|주소|date|일시|카드|판매|상품명|수량|금액|교환|환불|결제|지참|구매|신선|고객센터|p[o0]s/i;
+  /영수증|receipt|고객용|사업자|대표자|전화|tel|주소|date|일시|카드|판매|상품명|품명|수량|단가|금액|교환|환불|결제|지참|구매|신선|고객센터|p[o0]s/i;
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -37,12 +38,28 @@ export function extractDate(text: string) {
     ...text.matchAll(
       /\b(?:19|20)[0-9OIl]{2}\s*년\s*[0-1OIl]?[0-9OIl]\s*월\s*[0-3OIlbB][0-9OIlbB]?\s*일/g,
     ),
+    ...text.matchAll(/(?:19|20)[0-9OIl]{6}/g),
+    ...text.matchAll(
+      /\b[27][0O][0-9OIl]{2}\s*(?:[./-]\s*|\s+)[0-1OIl]?[0-9OIl]\s*[./-]\s*[0-3OIlbB][0-9OIlbB]\b/g,
+    ),
+    ...text.matchAll(
+      /(?:^|\s)[0-9OIl]{2}\s*[./-]\s*[0-1OIl]?[0-9OIl]\s*[./-]\s*[0-3OIlbB][0-9OIlbB](?=\s|$)/g,
+    ),
   ];
 
   for (const candidate of candidates) {
     const parts = normalizeOcrDigits(candidate[0]).match(/\d+/g);
-    if (!parts || parts.length < 3) continue;
-    const [year, month, day] = parts.map(Number);
+    if (!parts || (parts.length < 3 && parts[0]?.length !== 8)) continue;
+    let [year, month, day] = parts.map(Number);
+    if (parts.length === 1 && parts[0].length === 8) {
+      year = Number(parts[0].slice(0, 4));
+      month = Number(parts[0].slice(4, 6));
+      day = Number(parts[0].slice(6, 8));
+    } else if (year < 100) {
+      year += 2000;
+    } else if (year >= 7000 && year <= 7099) {
+      year -= 5000;
+    }
     if (!validDate(year, month, day)) continue;
     return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   }
@@ -52,13 +69,17 @@ export function extractDate(text: string) {
 export function inferCategory(text: string) {
   const lower = text.toLowerCase();
   if (
-    /coffee|cafe|restaurant|food|steakhouse|starbucks|7\s*eleven|식당|카페|커피|스테이크|스타벅스|김밥|치킨|식사|편의점|세븐일레븐|바닐라|초코/.test(
+    /coffee|cafe|restaurant|food|steakhouse|starbucks|7\s*eleven|(?:^|\s)cu(?:\s|$)|gs\s*25|식당|카페|커피|스테이크|스타벅스|김밥|치킨|식사|편의점|세븐일레븐|바닐라|초코/.test(
       lower,
     )
   ) {
     return "식비";
   }
-  if (/taxi|bus|train|metro|parking|택시|버스|지하철|주차|철도/.test(lower)) {
+  if (
+    /taxi|bus|train|metro|parking|택시|버스|지하철|주차|철도|교통공사|기후동행카드|충전/.test(
+      lower,
+    )
+  ) {
     return "교통";
   }
   if (/hotel|stay|inn|호텔|숙박|리조트/.test(lower)) return "숙박";
@@ -86,9 +107,19 @@ export function extractMerchant(lines: string[]) {
     [/(?:^|\s)cu(?:\s|$)|씨유/i, "CU"],
     [/emart\s*24|이마트\s*24/i, "이마트24"],
     [/starbucks|스타벅스/i, "스타벅스"],
+    [/lotte\s*mart|롯데\s*마트/i, "롯데마트"],
+    [/다이소|daiso/i, "다이소"],
+    [/기후동행카드/i, "기후동행카드 충전"],
   ];
   const known = knownBrands.find(([pattern]) => pattern.test(joined));
   if (known) return branch ? `${known[1]} ${branch}` : known[1];
+
+  const labeled = lines
+    .map((line) =>
+      line.match(/(?:상호|가맹점명|매장명|사업자명)\s*[:：]?\s*([^|]{2,36})/i)?.[1]?.trim(),
+    )
+    .find((value) => value && !NON_MERCHANT_WORDS.test(value));
+  if (labeled) return labeled.replace(/\s{2,}/g, " ");
 
   const receiptBoundary = lines.findIndex(
     (line) => /\b(?:19|20)\d{2}[./\s-]|\bp[o0]s\s*:/i.test(line),
@@ -101,7 +132,9 @@ export function extractMerchant(lines: string[]) {
         line.length <= 36 &&
         !NON_MERCHANT_WORDS.test(line) &&
         !/^\W?\d/.test(line) &&
-        /[가-힣A-Za-z]/.test(line),
+        /[가-힣A-Za-z]/.test(line) &&
+        (/[가-힣]{2,}/.test(line) || /[A-Za-z]{3,}/.test(line)) &&
+        (line.match(/[가-힣A-Za-z]/g)?.length ?? 0) / line.length >= 0.55,
     ) ?? ""
   );
 }
@@ -144,10 +177,15 @@ function hasSumSupport(target: number, candidates: AmountCandidate[]) {
 
 function extractKrwAmount(lines: string[]) {
   const candidates: AmountCandidate[] = [];
-  const amountPattern = /[₩￦Ww]?\s*[0-9OIl]{1,4}(?:\s*[,，.]\s*[0-9OIl]{1,3})+/g;
+  const amountPattern =
+    /[₩￦Ww]?\s*[0-9OIl]{1,4}(?:\s*[,，.]\s*[0-9OIl]{1,3})+|[0-9OIl]{1,8}\s*원/g;
 
   lines.forEach((line, lineIndex) => {
-    const matches = line.match(amountPattern) ?? [];
+    const matches = [...(line.match(amountPattern) ?? [])];
+    if (TOTAL_WORDS.test(line)) {
+      const plainTotal = line.match(/(?:^|\s)([0-9OIl]{3,8})(?:\s*(?:원|₩|￦)|\s*$)/i)?.[1];
+      if (plainTotal) matches.push(plainTotal);
+    }
     for (const match of matches) {
       const compactMatch = normalizeOcrDigits(match).replace(/[₩￦Ww\s]/g, "");
       const groupedParts = compactMatch.split(/[,，.]/);
@@ -156,7 +194,9 @@ function extractKrwAmount(lines: string[]) {
       if (!Number.isFinite(value) || value <= 0 || value > 100_000_000) continue;
       const hasCurrency = /^[₩￦Ww]/.test(match.trim());
       let score = (lineIndex / Math.max(lines.length - 1, 1)) * 6 + 2;
+      const nearbyLabel = lines.slice(Math.max(0, lineIndex - 2), lineIndex + 1).join(" ");
       if (TOTAL_WORDS.test(line)) score += 12;
+      else if (TOTAL_WORDS.test(nearbyLabel)) score += 9;
       if (hasCurrency) score += 6;
       if (TAX_WORDS.test(line)) score -= 4;
       if (/사업자|전화|tel|승인|카드번호|품번/i.test(line)) score -= 12;
@@ -179,9 +219,32 @@ function extractKrwAmount(lines: string[]) {
     }
   });
 
+  const occurrenceCounts = new Map<number, number>();
   for (const candidate of candidates) {
-    if (candidate.correctedCurrency && hasSumSupport(candidate.value, candidates)) {
+    occurrenceCounts.set(candidate.value, (occurrenceCounts.get(candidate.value) ?? 0) + 1);
+  }
+  const largestRepeated = Math.max(
+    0,
+    ...[...occurrenceCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([value]) => value),
+  );
+  const correctedWithSumSupport = new Set(
+    candidates
+      .filter(
+        (candidate) =>
+          candidate.correctedCurrency && hasSumSupport(candidate.value, candidates),
+      )
+      .map((candidate) => candidate.value),
+  );
+  for (const candidate of candidates) {
+    if (correctedWithSumSupport.has(candidate.value)) {
       candidate.score += 10;
+    }
+    const repeats = occurrenceCounts.get(candidate.value) ?? 1;
+    if (repeats > 1) candidate.score += Math.min(12, (repeats - 1) * 6);
+    if (!correctedWithSumSupport.size && candidate.value === largestRepeated) {
+      candidate.score += 8;
     }
   }
 
@@ -233,7 +296,7 @@ function extractUsdAmount(lines: string[]) {
   return candidates.length ? Math.max(...candidates) : 0;
 }
 
-export function extractAmount(lines: string[], currency: "KRW" | "USD" = "KRW") {
+export function extractAmount(lines: string[], currency: ExpenseDraft["currency"] = "KRW") {
   return currency === "USD" ? extractUsdAmount(lines) : extractKrwAmount(lines);
 }
 
@@ -243,7 +306,14 @@ export function parseReceipt(text: string): ExpenseDraft {
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   const merchant = extractMerchant(lines);
-  const currency = /\$\s*\d/.test(text) ? "USD" : "KRW";
+  const dollarAmounts = text.match(/\$\s*\d+(?:[.,]\d{2})/g) ?? [];
+  const currency: ExpenseDraft["currency"] =
+    dollarAmounts.length >= 2 ||
+    (dollarAmounts.length === 1 && /\b(?:subtotal|tax|tip|total)\b/i.test(text))
+    ? "USD"
+    : /(?:lotte\s*mart\s*da\s*nang|tong\s*cong|tien\s*tra|vnd|₫)/i.test(text)
+      ? "VND"
+      : "KRW";
   const amount = extractAmount(lines, currency);
 
   return {
@@ -254,6 +324,81 @@ export function parseReceipt(text: string): ExpenseDraft {
     category: inferCategory(`${merchant} ${lines.join(" ")}`),
     description: merchant ? `${merchant} 영수증` : "영수증 경비",
   };
+}
+
+type OcrReceiptPass = {
+  text: string;
+  confidence: number;
+};
+
+function normalizedField(value: string) {
+  return value.toLowerCase().replace(/[^0-9a-z가-힣]/g, "");
+}
+
+function selectSupportedValue(values: string[]) {
+  const present = values.filter(Boolean);
+  if (!present.length) return "";
+  const support = new Map<string, { value: string; count: number; first: number }>();
+  present.forEach((value, index) => {
+    const key = normalizedField(value);
+    const current = support.get(key);
+    support.set(key, current ? { ...current, count: current.count + 1 } : { value, count: 1, first: index });
+  });
+  return [...support.values()].sort(
+    (left, right) => right.count - left.count || left.first - right.first || right.value.length - left.value.length,
+  )[0].value;
+}
+
+function agreement(values: string[], selected: string) {
+  const present = values.filter(Boolean);
+  if (!selected || !present.length) return 0;
+  const key = normalizedField(selected);
+  return present.filter((value) => normalizedField(value) === key).length / present.length;
+}
+
+export function analyzeReceiptPasses(passes: OcrReceiptPass[]) {
+  const usable = passes.filter((pass) => pass.text.trim());
+  if (!usable.length) return { draft: parseReceipt(""), confidence: 0 };
+  const combinedText = usable.map((pass) => pass.text).join("\n");
+  const parsed = [parseReceipt(combinedText), ...usable.map((pass) => parseReceipt(pass.text))];
+  const merchantValues = parsed.map((draft) => draft.merchant);
+  const dateValues = parsed.map((draft) => draft.date);
+  const amountValues = parsed.map((draft) =>
+    draft.amount ? `${draft.currency}:${draft.amount}` : "",
+  );
+  const merchant = selectSupportedValue(merchantValues);
+  const date = selectSupportedValue(dateValues);
+  const selectedAmount = selectSupportedValue(amountValues);
+  const amountDraft = parsed.find(
+    (draft) => draft.amount && `${draft.currency}:${draft.amount}` === selectedAmount,
+  );
+  const currency = amountDraft?.currency ?? parsed[0].currency;
+  const amount = amountDraft?.amount ?? "";
+  const category = inferCategory(`${merchant} ${combinedText}`);
+  const draft: ExpenseDraft = {
+    merchant,
+    date,
+    amount,
+    currency,
+    category,
+    description: merchant ? `${merchant} 영수증` : "영수증 경비",
+  };
+
+  const merchantScore = merchant ? 0.55 + agreement(merchantValues, merchant) * 0.45 : 0;
+  const dateScore = date ? 0.6 + agreement(dateValues, date) * 0.4 : 0;
+  const amountScore = amount ? 0.65 + agreement(amountValues, selectedAmount) * 0.35 : 0;
+  const ocrScore =
+    usable.reduce((sum, pass) => sum + clampConfidence(pass.confidence), 0) / usable.length / 100;
+  let confidence = Math.round(
+    merchantScore * 22 + dateScore * 25 + amountScore * 43 + ocrScore * 10,
+  );
+  if (!amount) confidence = Math.min(confidence, 42);
+  if (!merchant || !date) confidence = Math.min(confidence, 78);
+  return { draft, confidence };
+}
+
+function clampConfidence(value: number) {
+  return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 }
 
 export const receiptParserFallbackDate = today;
